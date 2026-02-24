@@ -7,7 +7,7 @@ I too am an AI skeptic, so yeah, I realise the irony of putting out a vibecoded 
 
 ## Requirements
 
-- macOS 15.0 or later
+- macOS 15.0 or later (26 preferred)
 - An XMPP server (Ejabberd, Prosody, Openfire, or any compliant implementation)
 - Correct political-ideological orientation toward open protocols
 
