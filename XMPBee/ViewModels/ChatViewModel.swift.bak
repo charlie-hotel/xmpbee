@@ -1,0 +1,753 @@
+import Foundation
+import SwiftUI
+import Security
+
+/// Main view model — bridges XMPP connections to the UI
+@MainActor
+class ChatViewModel: ObservableObject, XMPPClientDelegate {
+    @Published var servers: [Server] = []
+    @Published var selectedRoom: Room?
+    @Published var selectedServer: Server?
+    @Published var inputText = ""
+    @Published var showConnectSheet = false
+    @Published var showJoinRoom = false
+    @Published var showNewDM = false
+    @Published var showBrowseRooms = false
+    @Published var showError = false
+    @Published var errorMessage = ""
+    @Published var discoveredRooms: [(jid: String, name: String)] = []
+    @Published var isLoadingRooms = false
+
+    /// Notification manager
+    let notifications = NotificationManager.shared
+
+    /// Maps server ID → XMPP client
+    private var clients: [UUID: XMPPClient] = [:]
+    /// Maps server ID → pending rooms/config
+    private var pendingConfig: [UUID: (nickname: String, confServer: String, rooms: [String])] = [:]
+
+    /// Reconnection state
+    private var reconnectionTimers: [UUID: Timer] = [:]
+    private var reconnectionAttempts: [UUID: Int] = [:]
+    private let maxReconnectionAttempts = 5
+    private var manuallyDisconnected: Set<UUID> = []
+
+    // MARK: - Server Management
+
+    func addServerAndConnect(
+        name: String, hostname: String, port: Int,
+        jid: String, password: String,
+        resource: String = "XMPBee",
+        securityMode: SecurityMode = .requireTLS,
+        nickname: String, conferenceServer: String, rooms: [String]
+    ) {
+        // Create server WITHOUT password (security: passwords not stored in Server objects)
+        let server = Server(name: name, hostname: hostname, port: port, jid: jid)
+        servers.append(server)
+
+        pendingConfig[server.id] = (nickname: nickname, confServer: conferenceServer, rooms: rooms)
+
+        let client = XMPPClient()
+        client.delegate = self
+        clients[server.id] = client
+
+        addSystemMessage(to: server, text: "Connecting to \(hostname):\(port) (\(securityMode))...")
+
+        // Password is passed directly to client and will be cleared after auth
+        client.connect(host: hostname, port: port, jid: jid, password: password,
+                       resource: resource, securityMode: securityMode)
+
+        // Save settings for next launch (password goes to Keychain, not Server object)
+        saveSettings(name: name, hostname: hostname, port: port, jid: jid, password: password,
+                     resource: resource, securityMode: securityMode, nickname: nickname,
+                     conferenceServer: conferenceServer, rooms: rooms)
+
+        // Reset reconnection attempts for new connections
+        reconnectionAttempts[server.id] = 0
+    }
+
+    // MARK: - Reconnection
+
+    private func scheduleReconnection(for server: Server) {
+        let attempts = reconnectionAttempts[server.id] ?? 0
+
+        guard attempts < maxReconnectionAttempts else {
+            addSystemMessage(to: server, text: "Max reconnection attempts reached. Click ⚡ to reconnect.")
+            return
+        }
+
+        // Exponential backoff: 2^attempts seconds (2, 4, 8, 16, 32 seconds)
+        let delay = min(pow(2.0, Double(attempts)), 32.0)
+        reconnectionAttempts[server.id] = attempts + 1
+
+        addSystemMessage(to: server, text: "Reconnecting in \(Int(delay))s... (attempt \(attempts + 1)/\(maxReconnectionAttempts))")
+
+        reconnectionTimers[server.id]?.invalidate()
+        reconnectionTimers[server.id] = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.reconnect(server: server)
+        }
+    }
+
+    func reconnect(server: Server) {
+        guard let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
+              let jid = dict["jid"] as? String,
+              let password = Self.loadPasswordFromKeychain(for: jid),
+              let config = pendingConfig[server.id] else {
+            addSystemMessage(to: server, text: "Reconnection failed: missing credentials")
+            return
+        }
+
+        addSystemMessage(to: server, text: "Reconnecting to \(server.hostname):\(server.port)...")
+
+        let hostname = dict["hostname"] as? String ?? server.hostname
+        let port = dict["port"] as? Int ?? server.port
+        let resource = dict["resource"] as? String ?? "XMPBee"
+        let modeRaw = dict["securityMode"] as? String ?? "requireTLS"
+        let securityMode = SecurityMode(rawValue: modeRaw) ?? .requireTLS
+
+        // Get existing client or create new one
+        let client = clients[server.id] ?? XMPPClient()
+        if clients[server.id] == nil {
+            client.delegate = self
+            clients[server.id] = client
+        }
+
+        client.connect(host: hostname, port: port, jid: jid, password: password,
+                       resource: resource, securityMode: securityMode)
+    }
+
+    func manualReconnect(server: Server) {
+        // Remove from manually disconnected set
+        manuallyDisconnected.remove(server.id)
+
+        // Reset reconnection attempts on manual reconnect
+        reconnectionAttempts[server.id] = 0
+        reconnectionTimers[server.id]?.invalidate()
+        reconnectionTimers[server.id] = nil
+        reconnect(server: server)
+    }
+
+    func disconnect(server: Server) {
+        // Mark as manually disconnected
+        manuallyDisconnected.insert(server.id)
+
+        // Cancel any pending reconnection attempts
+        reconnectionTimers[server.id]?.invalidate()
+        reconnectionTimers[server.id] = nil
+
+        // Disconnect the client (will trigger xmppDidDisconnect delegate)
+        if let client = clients[server.id] {
+            client.disconnect()
+        }
+    }
+
+    // MARK: - Settings Persistence
+
+    private static let settingsKey = "SavedServerSettings"
+
+    private func saveSettings(name: String, hostname: String, port: Int,
+                              jid: String, password: String, resource: String,
+                              securityMode: SecurityMode, nickname: String,
+                              conferenceServer: String, rooms: [String]) {
+        // Preserve existing dmContacts
+        var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) ?? [:]
+
+        // Update server settings
+        dict["name"] = name
+        dict["hostname"] = hostname
+        dict["port"] = port
+        dict["jid"] = jid
+        dict["resource"] = resource
+        dict["securityMode"] = securityMode.rawValue
+        dict["nickname"] = nickname
+        dict["conferenceServer"] = conferenceServer
+        dict["rooms"] = rooms
+
+        UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+
+        // Store password in Keychain
+        Self.savePasswordToKeychain(password, for: jid)
+
+        // Remove any leftover plaintext password from old versions
+        if var cleaned = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
+           cleaned["password"] != nil {
+            cleaned.removeValue(forKey: "password")
+            UserDefaults.standard.set(cleaned, forKey: Self.settingsKey)
+        }
+    }
+
+    func loadAndReconnect() {
+        guard let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
+        guard let jid = dict["jid"] as? String, !jid.isEmpty else { return }
+
+        // Read password from Keychain (fall back to UserDefaults for migration)
+        let password: String
+        if let keychainPw = Self.loadPasswordFromKeychain(for: jid) {
+            password = keychainPw
+        } else if let legacyPw = dict["password"] as? String, !legacyPw.isEmpty {
+            // Migrate plaintext password to Keychain and scrub it from UserDefaults
+            Self.savePasswordToKeychain(legacyPw, for: jid)
+            var cleaned = dict
+            cleaned.removeValue(forKey: "password")
+            UserDefaults.standard.set(cleaned, forKey: Self.settingsKey)
+            password = legacyPw
+        } else {
+            return
+        }
+        guard !password.isEmpty else { return }
+
+        let name = dict["name"] as? String ?? ""
+        let hostname = dict["hostname"] as? String ?? ""
+        let port = dict["port"] as? Int ?? 5222
+        let resource = dict["resource"] as? String ?? "XMPBee"
+        let modeRaw = dict["securityMode"] as? String ?? "requireTLS"
+        let securityMode = SecurityMode(rawValue: modeRaw) ?? .requireTLS
+        let nickname = dict["nickname"] as? String ?? ""
+        let conferenceServer = dict["conferenceServer"] as? String ?? ""
+        let rooms = dict["rooms"] as? [String] ?? []
+
+        addServerAndConnect(name: name, hostname: hostname, port: port,
+                           jid: jid, password: password, resource: resource,
+                           securityMode: securityMode, nickname: nickname,
+                           conferenceServer: conferenceServer, rooms: rooms)
+
+        // DM contacts will be restored in xmppDidAuthenticate() after connection
+    }
+
+    private func appendSavedRoom(_ name: String) {
+        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
+        var rooms = dict["rooms"] as? [String] ?? []
+        if !rooms.contains(name) {
+            rooms.append(name)
+            dict["rooms"] = rooms
+            UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+        }
+    }
+
+    private func removeSavedRoom(_ name: String) {
+        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
+        var rooms = dict["rooms"] as? [String] ?? []
+        rooms.removeAll { $0 == name }
+        dict["rooms"] = rooms
+        UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+    }
+
+    // MARK: - Keychain
+
+    private static let keychainService = "com.xmpbee.app"
+
+    private static func savePasswordToKeychain(_ password: String, for account: String) {
+        guard let data = password.data(using: .utf8) else { return }
+
+        // Delete any existing entry first
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        // Add new entry
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private static func loadPasswordFromKeychain(for account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    func selectRoom(_ room: Room, on server: Server) {
+        selectedRoom = room
+        selectedServer = server
+        // Clear unread count after view update completes
+        DispatchQueue.main.async {
+            room.unreadCount = 0
+        }
+    }
+
+    // MARK: - Messaging
+
+    func sendMessage() {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let room = selectedRoom, let server = selectedServer else { return }
+        guard let client = clients[server.id] else { return }
+
+        inputText = ""
+
+        // Handle /me actions
+        if text.hasPrefix("/me ") {
+            let action = String(text.dropFirst(4))
+            client.sendGroupMessage(to: room.jid, body: "/me \(action)")
+        } else if text.hasPrefix("/topic ") {
+            // Set topic (requires permission)
+            let _ = String(text.dropFirst(7))
+            // Send as subject change — simplified
+            client.sendGroupMessage(to: room.jid, body: text)
+        } else if text.hasPrefix("/join ") {
+            let roomName = String(text.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            if let config = pendingConfig[server.id] {
+                let roomJID = "\(roomName)@\(config.confServer)"
+                joinSingleRoom(server: server, client: client, roomJID: roomJID, roomName: roomName, nickname: config.nickname)
+                appendSavedRoom(roomName)
+            }
+        } else if text.hasPrefix("/part") || text.hasPrefix("/leave") {
+            client.leaveRoom(jid: room.jid, nickname: room.nickname)
+            server.rooms.removeAll { $0.id == room.id }
+            selectedRoom = server.rooms.first
+        } else if text.hasPrefix("/msg ") {
+            // /msg nick message — send a MUC private message
+            let rest = String(text.dropFirst(5))
+            if let spaceIdx = rest.firstIndex(of: " ") {
+                let nick = String(rest[rest.startIndex..<spaceIdx])
+                let body = String(rest[rest.index(after: spaceIdx)...])
+                sendDM(to: nick, body: body, in: room, on: server)
+            }
+        } else if room.isDM {
+            // In a DM tab, send as a direct chat message to nick@server
+            client.sendDirectMessage(to: room.jid, body: text)
+            let msg = ChatMessage(
+                timestamp: Date(), sender: room.nickname, body: text,
+                type: .chat, senderColor: ChatMessage.colorForNick(room.nickname)
+            )
+            room.messages.append(msg)
+            objectWillChange.send()
+        } else {
+            client.sendGroupMessage(to: room.jid, body: text)
+        }
+    }
+
+    // MARK: - Leave Room
+
+    func leaveRoom(_ room: Room, on server: Server) {
+        if room.isDM {
+            // Remove from saved DM contacts
+            removeSavedDM(room.name)
+        } else {
+            // Send XMPP leave presence
+            clients[server.id]?.leaveRoom(jid: room.jid, nickname: room.nickname)
+            // Remove from saved rooms
+            removeSavedRoom(room.name)
+        }
+        // Remove from UI
+        server.rooms.removeAll { $0.id == room.id }
+        if selectedRoom?.id == room.id {
+            selectedRoom = server.rooms.first
+        }
+        objectWillChange.send()
+    }
+
+    // MARK: - Join Room
+
+    /// Join a new MUC room on the given server
+    func joinNewRoom(name: String, on server: Server) {
+        guard let client = clients[server.id],
+              let config = pendingConfig[server.id] else { return }
+        let roomJID = "\(name)@\(config.confServer)"
+        guard !server.rooms.contains(where: { $0.jid == roomJID }) else { return }
+        joinSingleRoom(server: server, client: client, roomJID: roomJID, roomName: name, nickname: config.nickname)
+        objectWillChange.send()
+        appendSavedRoom(name)
+    }
+
+    /// Get the nickname we're using on a server
+    func nickname(on server: Server) -> String? {
+        pendingConfig[server.id]?.nickname
+    }
+
+    /// Fetch available rooms from the conference server
+    func browseRooms(on server: Server) {
+        guard let client = clients[server.id],
+              let config = pendingConfig[server.id] else { return }
+        isLoadingRooms = true
+        discoveredRooms = []
+        client.requestRoomList(from: config.confServer) { [weak self] rooms in
+            self?.discoveredRooms = rooms.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            self?.isLoadingRooms = false
+        }
+    }
+
+    // MARK: - DM Support
+
+    /// Send a direct message to a user on the server
+    func sendDM(to nick: String, body: String, in room: Room, on server: Server) {
+        guard let client = clients[server.id] else { return }
+
+        // DMs go to nick@server-domain (the user's bare JID)
+        let dmJID = "\(nick)@\(server.domain)"
+        client.sendDirectMessage(to: dmJID, body: body)
+
+        let dmRoom = findOrCreateDMRoom(nick: nick, server: server)
+        let msg = ChatMessage(
+            timestamp: Date(), sender: room.nickname, body: body,
+            type: .chat, senderColor: ChatMessage.colorForNick(room.nickname)
+        )
+        dmRoom.messages.append(msg)
+        objectWillChange.send()
+        selectedRoom = dmRoom
+        selectedServer = server
+    }
+
+    /// Open a DM tab for a user (called from context menu or New DM button)
+    func openDM(nick: String, in room: Room, on server: Server) {
+        let dmRoom = findOrCreateDMRoom(nick: nick, server: server)
+        selectedRoom = dmRoom
+        selectedServer = server
+    }
+
+    private func findOrCreateDMRoom(nick: String, server: Server, save: Bool = true) -> Room {
+        let dmJID = "\(nick)@\(server.domain)"
+        // Check if we already have a DM tab for this user
+        if let existing = server.rooms.first(where: { $0.isDM && $0.jid == dmJID }) {
+            return existing
+        }
+
+        let nickname = pendingConfig[server.id]?.nickname ?? "me"
+        let dmRoom = Room(jid: dmJID, name: nick, nickname: nickname)
+        dmRoom.isDM = true
+        dmRoom.initialPresenceComplete = true
+        server.rooms.append(dmRoom)
+        objectWillChange.send()
+        if save { appendSavedDM(nick) }
+        return dmRoom
+    }
+
+    // MARK: - DM Contact Persistence
+
+    private func appendSavedDM(_ nick: String) {
+        print("[DM] appendSavedDM called for: \(nick)")
+        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else {
+            print("[DM] ERROR: No settings dict found in UserDefaults")
+            return
+        }
+        var dms = dict["dmContacts"] as? [String] ?? []
+        print("[DM] Current DM contacts: \(dms)")
+        if !dms.contains(nick) {
+            dms.append(nick)
+            dict["dmContacts"] = dms
+            UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+            print("[DM] Saved DM contact. New list: \(dms)")
+        } else {
+            print("[DM] DM contact already exists, not saving")
+        }
+    }
+
+    private func removeSavedDM(_ nick: String) {
+        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
+        var dms = dict["dmContacts"] as? [String] ?? []
+        dms.removeAll { $0 == nick }
+        dict["dmContacts"] = dms
+        UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+    }
+
+    // MARK: - Internal Helpers
+
+    private func server(for client: XMPPClient) -> Server? {
+        for (id, c) in clients where c === client {
+            return servers.first { $0.id == id }
+        }
+        return nil
+    }
+
+    private func myNickname(in room: Room) -> String {
+        room.nickname
+    }
+
+    private func addSystemMessage(to server: Server, text: String) {
+        let msg = ChatMessage(
+            timestamp: Date(), sender: "", body: text,
+            type: .system, senderColor: .gray
+        )
+        if let room = server.rooms.first {
+            room.messages.append(msg)
+        }
+    }
+
+    private func joinSingleRoom(server: Server, client: XMPPClient, roomJID: String, roomName: String, nickname: String) {
+        // Check if room already exists (e.g., from a previous connection)
+        if let existingRoom = server.rooms.first(where: { $0.jid == roomJID }) {
+            // Reuse existing room to preserve message history
+            existingRoom.messages.append(ChatMessage(
+                timestamp: Date(), sender: "", body: "Rejoining \(existingRoom.displayName)...",
+                type: .system, senderColor: .gray
+            ))
+            client.joinRoom(jid: roomJID, nickname: nickname)
+            return
+        }
+
+        // Create new room if it doesn't exist
+        let room = Room(jid: roomJID, name: roomName, nickname: nickname)
+        room.messages.append(ChatMessage(
+            timestamp: Date(), sender: "", body: "Joining \(room.displayName)...",
+            type: .system, senderColor: .gray
+        ))
+        server.rooms.append(room)
+
+        if selectedRoom == nil {
+            selectedRoom = room
+            selectedServer = server
+        }
+
+        client.joinRoom(jid: roomJID, nickname: nickname)
+    }
+
+    // MARK: - XMPPClientDelegate
+
+    func xmppDidConnect(_ client: XMPPClient) {
+        guard let server = server(for: client) else { return }
+        addSystemMessage(to: server, text: "Connected, negotiating TLS...")
+    }
+
+    func xmppDidAuthenticate(_ client: XMPPClient) {
+        guard let server = server(for: client) else { return }
+        server.isConnected = true
+
+        // Reset reconnection state on successful connection
+        reconnectionAttempts[server.id] = 0
+        reconnectionTimers[server.id]?.invalidate()
+        reconnectionTimers[server.id] = nil
+
+        // Join configured rooms
+        if let config = pendingConfig[server.id] {
+            if config.rooms.isEmpty {
+                let statusRoom = Room(jid: "", name: server.name, nickname: config.nickname)
+                statusRoom.messages.append(ChatMessage(
+                    timestamp: Date(), sender: "", body: "Connected to \(server.hostname) as \(client.boundJID)",
+                    type: .system, senderColor: .gray
+                ))
+                server.rooms.append(statusRoom)
+                if selectedRoom == nil {
+                    selectedRoom = statusRoom
+                    selectedServer = server
+                }
+            } else {
+                for roomName in config.rooms {
+                    let roomJID = "\(roomName)@\(config.confServer)"
+                    joinSingleRoom(server: server, client: client, roomJID: roomJID, roomName: roomName, nickname: config.nickname)
+                }
+            }
+
+            // Restore saved DMs
+            if let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
+               let dmContacts = dict["dmContacts"] as? [String], !dmContacts.isEmpty {
+                print("[DM] Restoring \(dmContacts.count) DM contact(s): \(dmContacts)")
+                addSystemMessage(to: server, text: "Restoring \(dmContacts.count) DM contact(s)...")
+                for nick in dmContacts {
+                    _ = findOrCreateDMRoom(nick: nick, server: server, save: false)
+                }
+            } else {
+                print("[DM] No DMs to restore (dmContacts empty or missing)")
+            }
+        }
+    }
+
+    func xmppDidDisconnect(_ client: XMPPClient, error: Error?) {
+        guard let server = server(for: client) else { return }
+        server.isConnected = false
+        let reason = error?.localizedDescription ?? "Connection closed"
+        addSystemMessage(to: server, text: "Disconnected: \(reason)")
+
+        // Only attempt automatic reconnection if not manually disconnected
+        if !manuallyDisconnected.contains(server.id) {
+            scheduleReconnection(for: server)
+        }
+    }
+
+    func xmpp(_ client: XMPPClient, didReceiveMessage message: XMPPIncomingMessage) {
+        guard let server = server(for: client) else { return }
+
+        let fullFrom = message.from
+        let parts = fullFrom.components(separatedBy: "/")
+        let roomJID = parts.first ?? fullFrom
+        let nick = parts.count > 1 ? parts[1] : fullFrom
+
+        // Handle incoming DMs (type="chat" from user@server or user@server/resource)
+        if message.type == "chat" {
+            // Extract the bare JID (nick@server) — the sender
+            let bareFrom = roomJID  // parts[0] = "nick@server"
+            let senderNick = bareFrom.components(separatedBy: "@").first ?? bareFrom
+
+            let dmRoom = findOrCreateDMRoom(nick: senderNick, server: server)
+            let timestamp = message.timestamp ?? Date()
+            let chatMsg = ChatMessage(
+                timestamp: timestamp, sender: senderNick, body: message.body,
+                type: .chat, senderColor: ChatMessage.colorForNick(senderNick)
+            )
+            dmRoom.messages.append(chatMsg)
+            objectWillChange.send()
+            if dmRoom.id != selectedRoom?.id {
+                dmRoom.unreadCount += 1
+            }
+            notifications.notifyDirectMessage(sender: senderNick, body: message.body)
+            if notifications.playSound {
+                notifications.playAlertSound()
+            }
+            return
+        }
+
+        guard let room = server.rooms.first(where: { $0.jid == roomJID }) else { return }
+
+        let timestamp = message.timestamp ?? Date()
+
+        // Detect /me actions
+        let isAction = message.body.hasPrefix("/me ")
+        let body = isAction ? String(message.body.dropFirst(4)) : message.body
+        let type: ChatMessage.MessageType = isAction ? .action : .chat
+
+        let chatMsg = ChatMessage(
+            timestamp: timestamp,
+            sender: nick,
+            body: body,
+            type: type,
+            senderColor: ChatMessage.colorForNick(nick)
+        )
+
+        room.messages.append(chatMsg)
+        objectWillChange.send()
+
+        // Update unread count if not the selected room (deferred to avoid publishing during view update)
+        let shouldIncrementUnread = room.id != selectedRoom?.id
+        if shouldIncrementUnread {
+            DispatchQueue.main.async {
+                room.unreadCount += 1
+            }
+        }
+
+        // --- Notifications ---
+        let isFromMe = nick == room.nickname
+        let isHistory = message.isDelayed
+
+        if !isFromMe && !isHistory {
+            let mentionsMe = body.localizedCaseInsensitiveContains(room.nickname)
+
+            if message.type == "groupchat" {
+                notifications.notifyGroupMessage(
+                    room: room.displayName,
+                    sender: nick,
+                    body: body,
+                    mentionsMe: mentionsMe
+                )
+
+                // Play in-app sound for mentions even when focused
+                if mentionsMe && notifications.playSound {
+                    notifications.playAlertSound()
+                }
+            } else if message.type == "chat" {
+                notifications.notifyDirectMessage(sender: nick, body: body)
+
+                // Always play sound for DMs
+                if notifications.playSound {
+                    notifications.playAlertSound()
+                }
+            }
+        }
+    }
+
+    func xmpp(_ client: XMPPClient, didReceivePresence presence: XMPPPresence) {
+        guard let server = server(for: client) else { return }
+        guard let roomJID = presence.roomJID, let nick = presence.nick else { return }
+        guard let room = server.rooms.first(where: { $0.jid == roomJID }) else { return }
+
+        let affiliation: Occupant.Affiliation = {
+            switch presence.affiliation {
+            case "owner": return .owner
+            case "admin": return .admin
+            case "member": return .member
+            case "outcast": return .outcast
+            default: return .none
+            }
+        }()
+
+        let role: Occupant.Role = {
+            switch presence.role {
+            case "moderator": return .moderator
+            case "participant": return .participant
+            case "visitor": return .visitor
+            default: return .none
+            }
+        }()
+
+        if presence.type == "unavailable" {
+            room.occupants.removeAll { $0.nick == nick }
+            if room.initialPresenceComplete {
+                let msg = ChatMessage(
+                    timestamp: Date(), sender: nick, body: "",
+                    type: .part, senderColor: ChatMessage.colorForNick(nick)
+                )
+                room.messages.append(msg)
+                notifications.notifyJoinPart(room: room.displayName, user: nick, joined: false)
+            }
+        } else {
+            let occupant = Occupant(nick: nick, affiliation: affiliation, role: role)
+
+            if !room.initialPresenceComplete {
+                // During initial flood, buffer occupants without triggering @Published
+                if !room.pendingOccupants.contains(where: { $0.nick == nick }) {
+                    room.pendingOccupants.append(occupant)
+                }
+
+                // Self-presence (status 110) means flood is over — flush the batch
+                if presence.isSelfPresence {
+                    room.occupants = room.pendingOccupants.sorted()
+                    room.pendingOccupants = []
+                    room.initialPresenceComplete = true
+
+                    let msg = ChatMessage(
+                        timestamp: Date(), sender: "",
+                        body: "Joined \(room.displayName) (\(room.occupants.count) users)",
+                        type: .system, senderColor: .gray
+                    )
+                    room.messages.append(msg)
+                }
+            } else {
+                // Normal post-join presence
+                let existing = room.occupants.first { $0.nick == nick }
+                if existing == nil {
+                    room.occupants.append(occupant)
+                    let msg = ChatMessage(
+                        timestamp: Date(), sender: nick, body: "",
+                        type: .join, senderColor: ChatMessage.colorForNick(nick)
+                    )
+                    room.messages.append(msg)
+                    notifications.notifyJoinPart(room: room.displayName, user: nick, joined: true)
+                }
+            }
+        }
+        objectWillChange.send()
+    }
+
+    func xmpp(_ client: XMPPClient, didReceiveRoomSubject subject: String, room roomJID: String) {
+        guard let server = server(for: client) else { return }
+        guard let room = server.rooms.first(where: { $0.jid == roomJID }) else { return }
+
+        room.topic = subject
+        if !subject.isEmpty {
+            let msg = ChatMessage(
+                timestamp: Date(), sender: "", body: subject,
+                type: .topic, senderColor: .gray
+            )
+            room.messages.append(msg)
+        }
+        objectWillChange.send()
+    }
+
+    func xmpp(_ client: XMPPClient, didFailWithError error: XMPPError) {
+        errorMessage = "\(error)"
+        showError = true
+    }
+}

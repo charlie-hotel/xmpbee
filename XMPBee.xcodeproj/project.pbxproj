@@ -1,0 +1,424 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 71;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		04462CF422D26C2E5F77576C /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF7BE0B2E64133E9B60F5A86 /* PreferencesView.swift */; };
+		0F380E6C2F42B3B2008885DE /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0F380E6B2F42B3B2008885DE /* AppIcon.icon */; };
+		0FD151432F43E883000034D0 /* LogManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD151412F43E883000034D0 /* LogManager.swift */; };
+		0FD151452F43E898000034D0 /* LogViewerWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD151442F43E898000034D0 /* LogViewerWindow.swift */; };
+		11EEBD2E397FCA419B175123 /* XMPPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5374D069EF13B12D358B38E3 /* XMPPClient.swift */; };
+		178F703DBEF5BCAE75F3CFE4 /* ConnectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A842DBEA6EF17024161697 /* ConnectSheet.swift */; };
+		1C1A6ABCE6F586D8FCBAA7FC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A92EAB1420B7D78C481B5C6B /* Assets.xcassets */; };
+		2B7A7F40B9DCF02797A2B879 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AAAD73703917FFEF47A9750 /* Theme.swift */; };
+		2CBEAAE56AE6BF7BFB8E19D4 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67FC88E1F5F55E4454A147CC /* App.swift */; };
+		48982CF2A29F30DE436E9565 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54665C0CB84793271C66FC59 /* ChatMessage.swift */; };
+		4D98CFEC212310210A0E396F /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC8AF7C97331C3741956814 /* NotificationManager.swift */; };
+		5E5AD93011D8B17889D908E0 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 271EA52E00E9179F1DA35CD0 /* ChatView.swift */; };
+		5F1B5883C22DBFDE0C123915 /* XMPPConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3991762B85D949DCEBB09A12 /* XMPPConnection.swift */; };
+		61ECE9D25978BD560443B505 /* UserListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1383A091CAAC2D6CB75DA06 /* UserListView.swift */; };
+		8C4C18EB941C2D47ACA22AF6 /* Occupant.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFF3A07D8A706087B8225B5 /* Occupant.swift */; };
+		9538F9625FD1C9ABEB2F7A9D /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DE71832A783514D75CF195 /* SidebarView.swift */; };
+		9B85622E1D776012BD93E144 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1019A4D8B494F01949B4B88 /* ContentView.swift */; };
+		B4B56807C8004D8031F626B1 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61A58899A3909B86718AD240 /* ChatViewModel.swift */; };
+		B59ABA8FD44191BC8F435A1F /* XMLStreamParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E94BDDE65186F193474DB42 /* XMLStreamParser.swift */; };
+		D9B0A5CC3A4959D683008978 /* Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = A323A13FD5A83507F3E0506A /* Room.swift */; };
+		DDE442C4B5E347411F021743 /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D9F35C43F93C00196950A4F /* Server.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0E94BDDE65186F193474DB42 /* XMLStreamParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMLStreamParser.swift; sourceTree = "<group>"; };
+		0F380E6B2F42B3B2008885DE /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		0FD151412F43E883000034D0 /* LogManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogManager.swift; sourceTree = "<group>"; };
+		0FD151442F43E898000034D0 /* LogViewerWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogViewerWindow.swift; sourceTree = "<group>"; };
+		18A2AC2AE580644307B7BFD8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1ED5FC89C744932B0900FE4D /* XMPBee.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XMPBee.entitlements; sourceTree = "<group>"; };
+		25DE71832A783514D75CF195 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		271EA52E00E9179F1DA35CD0 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		3991762B85D949DCEBB09A12 /* XMPPConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPPConnection.swift; sourceTree = "<group>"; };
+		3AC8AF7C97331C3741956814 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		5374D069EF13B12D358B38E3 /* XMPPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPPClient.swift; sourceTree = "<group>"; };
+		54665C0CB84793271C66FC59 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
+		5AAAD73703917FFEF47A9750 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		61A58899A3909B86718AD240 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		67FC88E1F5F55E4454A147CC /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		68EB88AED944282D28F9C42C /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = XMPBee.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6D9F35C43F93C00196950A4F /* Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Server.swift; sourceTree = "<group>"; };
+		A1019A4D8B494F01949B4B88 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A323A13FD5A83507F3E0506A /* Room.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Room.swift; sourceTree = "<group>"; };
+		A92EAB1420B7D78C481B5C6B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C1383A091CAAC2D6CB75DA06 /* UserListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserListView.swift; sourceTree = "<group>"; };
+		D6A842DBEA6EF17024161697 /* ConnectSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectSheet.swift; sourceTree = "<group>"; };
+		DFFF3A07D8A706087B8225B5 /* Occupant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Occupant.swift; sourceTree = "<group>"; };
+		EF7BE0B2E64133E9B60F5A86 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D671C18CA012D592691429E1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		03A315BFB4145C0FD705317D /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				61A58899A3909B86718AD240 /* ChatViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		0FD151422F43E883000034D0 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				0FD151412F43E883000034D0 /* LogManager.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		334C4933B4BE7058377D4F44 /* XMPBee */ = {
+			isa = PBXGroup;
+			children = (
+				67FC88E1F5F55E4454A147CC /* App.swift */,
+				80E8D9E0468E18074C0C775E /* Models */,
+				E8C9277A35DC24F2FCD6E8AB /* Views */,
+				03A315BFB4145C0FD705317D /* ViewModels */,
+				B0EC0F6F0B5069D087C99F8A /* XMPP */,
+				A92EAB1420B7D78C481B5C6B /* Assets.xcassets */,
+				18A2AC2AE580644307B7BFD8 /* Info.plist */,
+				1ED5FC89C744932B0900FE4D /* XMPBee.entitlements */,
+				0F380E6B2F42B3B2008885DE /* AppIcon.icon */,
+				0FD151422F43E883000034D0 /* Services */,
+			);
+			path = XMPBee;
+			sourceTree = "<group>";
+		};
+		43F44E7F206A6F696F95D962 = {
+			isa = PBXGroup;
+			children = (
+				334C4933B4BE7058377D4F44 /* XMPBee */,
+				77CCCA5AE2D32BB65CB73519 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		77CCCA5AE2D32BB65CB73519 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				68EB88AED944282D28F9C42C /* XMPBee.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		80E8D9E0468E18074C0C775E /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				54665C0CB84793271C66FC59 /* ChatMessage.swift */,
+				3AC8AF7C97331C3741956814 /* NotificationManager.swift */,
+				DFFF3A07D8A706087B8225B5 /* Occupant.swift */,
+				A323A13FD5A83507F3E0506A /* Room.swift */,
+				6D9F35C43F93C00196950A4F /* Server.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		B0EC0F6F0B5069D087C99F8A /* XMPP */ = {
+			isa = PBXGroup;
+			children = (
+				0E94BDDE65186F193474DB42 /* XMLStreamParser.swift */,
+				5374D069EF13B12D358B38E3 /* XMPPClient.swift */,
+				3991762B85D949DCEBB09A12 /* XMPPConnection.swift */,
+			);
+			path = XMPP;
+			sourceTree = "<group>";
+		};
+		E8C9277A35DC24F2FCD6E8AB /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				271EA52E00E9179F1DA35CD0 /* ChatView.swift */,
+				D6A842DBEA6EF17024161697 /* ConnectSheet.swift */,
+				0FD151442F43E898000034D0 /* LogViewerWindow.swift */,
+				A1019A4D8B494F01949B4B88 /* ContentView.swift */,
+				EF7BE0B2E64133E9B60F5A86 /* PreferencesView.swift */,
+				25DE71832A783514D75CF195 /* SidebarView.swift */,
+				5AAAD73703917FFEF47A9750 /* Theme.swift */,
+				C1383A091CAAC2D6CB75DA06 /* UserListView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		EEFA3E70D98A0F966999694F /* XMPBee */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D5FFAFD07A9F77BD77800DC6 /* Build configuration list for PBXNativeTarget "XMPBee" */;
+			buildPhases = (
+				FE7F76C325C56DF71DB78D53 /* Sources */,
+				C256B298E26BBF91A1772F6D /* Resources */,
+				D671C18CA012D592691429E1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = XMPBee;
+			productName = XMPBee;
+			productReference = 68EB88AED944282D28F9C42C /* XMPBee.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5E729DA68670304DF4633F25 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2620;
+			};
+			buildConfigurationList = F93FFFF1C2C202203D9C9585 /* Build configuration list for PBXProject "XMPBee" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 43F44E7F206A6F696F95D962;
+			productRefGroup = 77CCCA5AE2D32BB65CB73519 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				EEFA3E70D98A0F966999694F /* XMPBee */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C256B298E26BBF91A1772F6D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1C1A6ABCE6F586D8FCBAA7FC /* Assets.xcassets in Resources */,
+				0F380E6C2F42B3B2008885DE /* AppIcon.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FE7F76C325C56DF71DB78D53 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0FD151432F43E883000034D0 /* LogManager.swift in Sources */,
+				2CBEAAE56AE6BF7BFB8E19D4 /* App.swift in Sources */,
+				48982CF2A29F30DE436E9565 /* ChatMessage.swift in Sources */,
+				4D98CFEC212310210A0E396F /* NotificationManager.swift in Sources */,
+				8C4C18EB941C2D47ACA22AF6 /* Occupant.swift in Sources */,
+				D9B0A5CC3A4959D683008978 /* Room.swift in Sources */,
+				DDE442C4B5E347411F021743 /* Server.swift in Sources */,
+				B4B56807C8004D8031F626B1 /* ChatViewModel.swift in Sources */,
+				5E5AD93011D8B17889D908E0 /* ChatView.swift in Sources */,
+				0FD151452F43E898000034D0 /* LogViewerWindow.swift in Sources */,
+				178F703DBEF5BCAE75F3CFE4 /* ConnectSheet.swift in Sources */,
+				9B85622E1D776012BD93E144 /* ContentView.swift in Sources */,
+				04462CF422D26C2E5F77576C /* PreferencesView.swift in Sources */,
+				9538F9625FD1C9ABEB2F7A9D /* SidebarView.swift in Sources */,
+				2B7A7F40B9DCF02797A2B879 /* Theme.swift in Sources */,
+				61ECE9D25978BD560443B505 /* UserListView.swift in Sources */,
+				B59ABA8FD44191BC8F435A1F /* XMLStreamParser.swift in Sources */,
+				11EEBD2E397FCA419B175123 /* XMPPClient.swift in Sources */,
+				5F1B5883C22DBFDE0C123915 /* XMPPConnection.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		092378DF862B97588AB647EC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = XMPBee/XMPBee.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = XMPBee/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XMPBee;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		578789E37D51781E7CFE1CEA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = XMPBee/XMPBee.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = XMPBee/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XMPBee;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		6E8AB85EDEDD09993C537D46 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		930628B4A555EBB515D20320 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		D5FFAFD07A9F77BD77800DC6 /* Build configuration list for PBXNativeTarget "XMPBee" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				578789E37D51781E7CFE1CEA /* Debug */,
+				092378DF862B97588AB647EC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F93FFFF1C2C202203D9C9585 /* Build configuration list for PBXProject "XMPBee" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6E8AB85EDEDD09993C537D46 /* Debug */,
+				930628B4A555EBB515D20320 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 5E729DA68670304DF4633F25 /* Project object */;
+}
