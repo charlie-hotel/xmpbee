@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build archive
+        run: |
+          xcodebuild archive \
+            -project XMPBee.xcodeproj \
+            -scheme XMPBee \
+            -configuration Release \
+            -archivePath build/XMPBee.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package app
+        run: |
+          cp -R build/XMPBee.xcarchive/Products/Applications/XMPBee.app build/XMPBee.app
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent XMPBee.app XMPBee-${{ github.ref_name }}.zip
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/XMPBee-${{ github.ref_name }}.zip
+          generate_release_notes: true
+
