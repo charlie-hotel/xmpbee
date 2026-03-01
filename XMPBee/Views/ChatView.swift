@@ -8,6 +8,12 @@ struct ChatView: View {
     @FocusState private var isInputFocused: Bool
     @State private var topicHovered = false
 
+    // MARK: - Tab completion state
+    @State private var completionCandidates: [String] = []
+    @State private var completionIndex: Int = 0
+    @State private var completionBase: String = ""     // text before the partial word
+    @State private var lastCompletedText: String = ""  // guards against cycling after manual edit
+
     var body: some View {
         ZStack(alignment: .bottom) {
             // Messages fill the full area — content shows through glass bars
@@ -38,6 +44,11 @@ struct ChatView: View {
                 .onChange(of: viewModel.selectedRoom?.id) {
                     // Clear height cache on room switch — prevents stale entries accumulating
                     messageHeightCache.removeAll()
+                    // Reset tab completion on room switch
+                    completionCandidates = []
+                    completionIndex = 0
+                    completionBase = ""
+                    lastCompletedText = ""
                     // Focus input when switching rooms
                     DispatchQueue.main.async {
                         isInputFocused = true
@@ -62,6 +73,50 @@ struct ChatView: View {
             // Floating input bar at bottom
             inputBar
         }
+    }
+
+    // MARK: - Tab Completion
+
+    private func handleTabCompletion() {
+        guard let room = viewModel.selectedRoom else { return }
+        let text = viewModel.inputText
+
+        // If the user edited the text since the last completion, discard the old cycle
+        if !completionCandidates.isEmpty && text != lastCompletedText {
+            completionCandidates = []
+            completionIndex = 0
+            completionBase = ""
+        }
+
+        if !completionCandidates.isEmpty {
+            // Cycle to the next candidate
+            completionIndex = (completionIndex + 1) % completionCandidates.count
+            let nick = completionCandidates[completionIndex]
+            let completed = completionBase.isEmpty ? "\(nick): " : "\(completionBase)\(nick) "
+            viewModel.inputText = completed
+            lastCompletedText = completed
+            return
+        }
+
+        // Start a new completion — find the word currently being typed
+        let partial = text.components(separatedBy: " ").last ?? ""
+        guard !partial.isEmpty else { return }
+
+        let base = String(text.dropLast(partial.count))
+        let matches = room.occupants
+            .map { $0.nick }
+            .filter { $0.lowercased().hasPrefix(partial.lowercased()) }
+        guard !matches.isEmpty else { return }
+
+        completionCandidates = matches
+        completionIndex = 0
+        completionBase = base
+
+        let nick = matches[0]
+        // IRC convention: "nick: " at the start of a line, "nick " mid-sentence
+        let completed = base.isEmpty ? "\(nick): " : "\(base)\(nick) "
+        viewModel.inputText = completed
+        lastCompletedText = completed
     }
 
     private var emptyState: some View {
@@ -145,6 +200,10 @@ struct ChatView: View {
                 .focused($isInputFocused)
                 .onSubmit {
                     viewModel.sendMessage()
+                }
+                .onKeyPress(.tab) {
+                    handleTabCompletion()
+                    return .handled
                 }
         }
         .padding(.horizontal, 12)
