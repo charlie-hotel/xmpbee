@@ -306,6 +306,11 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
         inputText = ""
 
+        // Sending implies "I'm engaging now" — snap the transcript to the bottom
+        // regardless of where the user had scrolled to. This also re-arms stickToBottom
+        // so the inevitable echo back from the server keeps following.
+        scrollToBottomTrigger &+= 1
+
         // Handle /me actions
         if text.hasPrefix("/me ") {
             let action = String(text.dropFirst(4))
