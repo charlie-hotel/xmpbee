@@ -1,7 +1,14 @@
 import SwiftUI
 import AppKit
 
-/// Main chat message area — Liquid Glass design with floating topic and input bars
+/// Main chat message area — Liquid Glass design with floating topic and input bars.
+///
+/// The transcript itself is rendered into a single NSTextView (via `ChatTranscriptView`)
+/// rather than a LazyVStack of per-message NSTextViews. That gives us:
+///   • Native auto-scroll-follows-bottom: only follows when the user is already near the bottom.
+///   • No blanking-on-scroll: one text container, all messages laid out coherently.
+///   • Performance into the tens of thousands of messages — appends are O(new content),
+///     not O(total messages), and NSLayoutManager's non-contiguous layout keeps memory bounded.
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @AppStorage("hideJoinPart") private var hideJoinPart = true
@@ -16,51 +23,36 @@ struct ChatView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Messages fill the full area — content shows through glass bars
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if let room = viewModel.selectedRoom {
-                            ForEach(room.messages) { msg in
-                                if !hideJoinPart || (msg.type != .join && msg.type != .part && msg.type != .quit) {
-                                    MessageRow(message: msg)
-                                        .id(msg.id)
-                                }
-                            }
-                        } else {
-                            emptyState
-                        }
-                    }
-                    .padding(.horizontal, 10)
+            // Transcript / empty state — content shows through glass bars
+            Group {
+                if viewModel.selectedRoom != nil {
+                    ChatTranscriptView(
+                        room: viewModel.selectedRoom,
+                        // Touch messages.count so SwiftUI re-invokes updateNSView when new
+                        // messages arrive even though Room is a separate ObservableObject.
+                        messageCount: viewModel.selectedRoom?.messages.count ?? 0,
+                        hideJoinPart: hideJoinPart,
+                        scrollTrigger: viewModel.scrollToBottomTrigger
+                    )
+                } else {
+                    emptyState
                 }
-                .id(viewModel.selectedRoom?.id) // Force recreation on room change
-                .defaultScrollAnchor(.bottom) // Start at bottom
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    Color.clear.frame(height: 44)
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: 64)
-                }
-                .onChange(of: viewModel.selectedRoom?.id) {
-                    // Clear height cache on room switch — prevents stale entries accumulating
-                    messageHeightCache.removeAll()
-                    // Reset tab completion on room switch
-                    completionCandidates = []
-                    completionIndex = 0
-                    completionBase = ""
-                    lastCompletedText = ""
-                    // Focus input when switching rooms
-                    DispatchQueue.main.async {
-                        isInputFocused = true
-                    }
-                }
-                .onChange(of: viewModel.scrollToBottomTrigger) {
-                    // Scroll to bottom on initial connect (after topic received)
-                    if let last = viewModel.selectedRoom?.messages.last {
-                        DispatchQueue.main.async {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
-                    }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Color.clear.frame(height: 44)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: 64)
+            }
+            .onChange(of: viewModel.selectedRoom?.id) {
+                // Reset tab completion on room switch
+                completionCandidates = []
+                completionIndex = 0
+                completionBase = ""
+                lastCompletedText = ""
+                // Focus input when switching rooms
+                DispatchQueue.main.async {
+                    isInputFocused = true
                 }
             }
 
@@ -214,6 +206,8 @@ struct ChatView: View {
     }
 }
 
+// MARK: - Link detection helpers
+
 /// Shared URL detector for link detection
 private let urlDetector: NSDataDetector? = {
     try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
@@ -232,6 +226,17 @@ private func addLinks(to attrString: NSMutableAttributedString, in range: NSRang
         }
     }
 }
+
+/// Paragraph style applied to every message — controls inter-message spacing and
+/// keeps multi-line bodies tight. paragraphSpacing ≈ the original `.padding(.vertical, 1)` x 2.
+private let messageParagraphStyle: NSParagraphStyle = {
+    let p = NSMutableParagraphStyle()
+    p.paragraphSpacing = 2
+    p.paragraphSpacingBefore = 0
+    p.lineSpacing = 0
+    p.lineBreakMode = .byWordWrapping
+    return p
+}()
 
 /// Helper to build NSAttributedString for a complete message row
 private func buildMessageAttributedString(_ message: ChatMessage) -> NSAttributedString {
@@ -325,6 +330,13 @@ private func buildMessageAttributedString(_ message: ChatMessage) -> NSAttribute
         result.append(system)
     }
 
+    // Apply paragraph style across the whole message so inter-message spacing is consistent
+    result.addAttribute(
+        .paragraphStyle,
+        value: messageParagraphStyle,
+        range: NSRange(location: 0, length: result.length)
+    )
+
     return result
 }
 
@@ -335,81 +347,259 @@ extension Color {
     }
 }
 
-/// A single message row — IRC-style formatting using native NSTextView
-struct MessageRow: View {
-    let message: ChatMessage
+// MARK: - Chat Transcript (single NSTextView)
 
-    var body: some View {
-        MessageTextView(messageID: message.id.uuidString, attributedString: buildMessageAttributedString(message))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 1)
-    }
-}
+/// Renders the full room scrollback into one NSTextView wrapped in an NSScrollView.
+///
+/// Update strategy:
+///   • Room or filter toggle changed → rebuild the whole text storage, scroll to bottom.
+///   • Otherwise → append only messages added since the last update.
+///   • Auto-scroll-follows-bottom is gated by whether the user was near the bottom
+///     immediately before the append (tracked via NSClipView bounds notifications).
+struct ChatTranscriptView: NSViewRepresentable {
+    let room: Room?
+    /// Pass-through so SwiftUI re-runs updateNSView when room.messages grows
+    /// (Room is its own ObservableObject and isn't observed here directly).
+    let messageCount: Int
+    let hideJoinPart: Bool
+    let scrollTrigger: Int
 
-// MARK: - Native Text View for Performance
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
-/// Shared height cache keyed by message ID + width to prevent LazyVStack jitter
-private var messageHeightCache: [String: CGFloat] = [:]
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.backgroundColor = .clear
+        scrollView.contentView.drawsBackground = false
+        scrollView.borderType = .noBorder
 
-/// NSTextView wrapper for message content - handles links and selection natively
-struct MessageTextView: NSViewRepresentable {
-    let messageID: String
-    let attributedString: NSAttributedString
-
-    func makeNSView(context: Context) -> NSTextView {
-        let textView = NSTextView()
+        let textView = NSTextView(frame: .zero)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.allowsUndo = false
         textView.isRichText = true
         textView.importsGraphics = false
-        textView.allowsUndo = false
+        textView.usesFontPanel = false
+        textView.usesRuler = false
+        textView.usesFindBar = true
+        textView.isAutomaticLinkDetectionEnabled = false  // we add links manually
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.linkTextAttributes = [
+            .foregroundColor: NSColor.linkColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .cursor: NSCursor.pointingHand,
+        ]
 
-        // Configure text container
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainerInset = .zero
-
-        // Disable scrolling - we're in a ScrollView
+        // Horizontal layout: text view's width tracks the scroll view's content width.
+        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.textContainer?.lineFragmentPadding = 6
+        textView.textContainer?.widthTracksTextView = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
-
-        // Max size
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.containerSize = NSSize(width: 800, height: CGFloat.greatestFiniteMagnitude)
 
-        // Set content immediately so first sizeThatFits call has content to measure
-        textView.textStorage?.setAttributedString(attributedString)
-        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+        // Non-contiguous layout keeps memory bounded on huge transcripts —
+        // NSLayoutManager only lays out the visible region rather than the whole document.
+        textView.layoutManager?.allowsNonContiguousLayout = true
 
-        return textView
+        textView.delegate = context.coordinator
+
+        scrollView.documentView = textView
+
+        // Watch scroll position so we know whether the user is "stuck to the bottom"
+        // (and should follow new messages) or scrolled up into the backlog.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.boundsChanged(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+
+        context.coordinator.scrollView = scrollView
+        context.coordinator.textView = textView
+
+        // Initial population
+        context.coordinator.update(
+            room: room,
+            hideJoinPart: hideJoinPart,
+            scrollTrigger: scrollTrigger
+        )
+        return scrollView
     }
 
-    func updateNSView(_ textView: NSTextView, context: Context) {
-        // Only update if content actually changed
-        if textView.textStorage?.string != attributedString.string {
-            textView.textStorage?.setAttributedString(attributedString)
-            // Invalidate cached height for this message
-            messageHeightCache.removeValue(forKey: messageID)
-        }
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.update(
+            room: room,
+            hideJoinPart: hideJoinPart,
+            scrollTrigger: scrollTrigger
+        )
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
-        let rawWidth = proposal.width ?? 800
-        let width = rawWidth.isFinite ? rawWidth : 800
-        let cacheKey = "\(messageID)@\(Int(width))"
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        NotificationCenter.default.removeObserver(coordinator)
+    }
 
-        // Return cached height if available - avoids layout thrashing in LazyVStack
-        if let cached = messageHeightCache[cacheKey] {
-            return CGSize(width: width, height: cached)
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        weak var scrollView: NSScrollView?
+        weak var textView: NSTextView?
+
+        private var renderedRoomID: UUID?
+        private var renderedCount: Int = 0
+        private var renderedHideJoinPart: Bool = true
+        private var lastScrollTrigger: Int = 0
+        /// True when the user is at (or within a few pixels of) the bottom.
+        /// Updated by NSClipView bounds notifications as the user scrolls.
+        private var stickToBottom: Bool = true
+        /// Guards stickToBottom from being clobbered by the bounds-change we trigger
+        /// ourselves when programmatically scrolling.
+        private var ignoreBoundsChange: Bool = false
+
+        // MARK: Scroll tracking
+
+        @objc func boundsChanged(_ note: Notification) {
+            guard !ignoreBoundsChange else { return }
+            updateStickToBottom()
         }
 
-        nsView.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        nsView.layoutManager?.ensureLayout(for: nsView.textContainer!)
-        let height = nsView.layoutManager?.usedRect(for: nsView.textContainer!).height ?? 0
+        private func updateStickToBottom() {
+            guard let scrollView, let textView else { return }
+            let visible = scrollView.documentVisibleRect
+            let bottom = textView.bounds.maxY
+            // Within ~24pt of the bottom counts as "at bottom" — gives wiggle room for
+            // the layout settling and for users who flick rather than scroll precisely.
+            stickToBottom = visible.maxY >= bottom - 24
+        }
 
-        messageHeightCache[cacheKey] = height
-        return CGSize(width: width, height: height)
+        // MARK: Update entry point
+
+        func update(room: Room?, hideJoinPart: Bool, scrollTrigger: Int) {
+            guard let textView, let storage = textView.textStorage else { return }
+
+            guard let room else {
+                if storage.length > 0 {
+                    storage.beginEditing()
+                    storage.setAttributedString(NSAttributedString())
+                    storage.endEditing()
+                }
+                renderedRoomID = nil
+                renderedCount = 0
+                renderedHideJoinPart = hideJoinPart
+                lastScrollTrigger = scrollTrigger
+                return
+            }
+
+            let roomChanged = room.id != renderedRoomID
+            let filterChanged = hideJoinPart != renderedHideJoinPart
+
+            // Full rebuild path: room switched or join/part toggle flipped.
+            if roomChanged || filterChanged {
+                rebuild(room: room, hideJoinPart: hideJoinPart, storage: storage)
+                renderedRoomID = room.id
+                renderedCount = room.messages.count
+                renderedHideJoinPart = hideJoinPart
+                stickToBottom = true
+                lastScrollTrigger = scrollTrigger
+                scrollToBottomDeferred()
+                return
+            }
+
+            // External "scroll to bottom now" trigger — e.g. topic-received on initial connect.
+            let triggerFired = scrollTrigger != lastScrollTrigger
+            if triggerFired {
+                lastScrollTrigger = scrollTrigger
+                stickToBottom = true
+            }
+
+            // Incremental append path.
+            let current = room.messages.count
+            if current > renderedCount {
+                let wasAtBottom = stickToBottom
+
+                let appended = NSMutableAttributedString()
+                for i in renderedCount..<current {
+                    let m = room.messages[i]
+                    if hideJoinPart && (m.type == .join || m.type == .part || m.type == .quit) {
+                        continue
+                    }
+                    appended.append(buildMessageAttributedString(m))
+                    appended.append(NSAttributedString(string: "\n"))
+                }
+                renderedCount = current
+
+                if appended.length > 0 {
+                    storage.beginEditing()
+                    storage.append(appended)
+                    storage.endEditing()
+                    if wasAtBottom {
+                        scrollToBottomDeferred()
+                    }
+                }
+            } else if current < renderedCount {
+                // Message list was truncated/reset (e.g. rejoin clears history) —
+                // fall back to a full rebuild so we stay consistent.
+                rebuild(room: room, hideJoinPart: hideJoinPart, storage: storage)
+                renderedCount = room.messages.count
+                scrollToBottomDeferred()
+            }
+
+            if triggerFired {
+                scrollToBottomDeferred()
+            }
+        }
+
+        // MARK: Rendering
+
+        private func rebuild(room: Room, hideJoinPart: Bool, storage: NSTextStorage) {
+            let full = NSMutableAttributedString()
+            for m in room.messages {
+                if hideJoinPart && (m.type == .join || m.type == .part || m.type == .quit) {
+                    continue
+                }
+                full.append(buildMessageAttributedString(m))
+                full.append(NSAttributedString(string: "\n"))
+            }
+            storage.beginEditing()
+            storage.setAttributedString(full)
+            storage.endEditing()
+        }
+
+        private func scrollToBottomDeferred() {
+            // Defer to next runloop so NSLayoutManager has finished laying out the
+            // newly-appended text and `scrollToEndOfDocument` actually lands at the end.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let textView = self.textView else { return }
+                self.ignoreBoundsChange = true
+                textView.scrollToEndOfDocument(nil)
+                self.stickToBottom = true
+                // Re-enable on the next runloop tick, after the bounds-change settles.
+                DispatchQueue.main.async { [weak self] in
+                    self?.ignoreBoundsChange = false
+                }
+            }
+        }
+
+        // MARK: NSTextViewDelegate
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            if let url = link as? URL {
+                NSWorkspace.shared.open(url)
+                return true
+            }
+            if let s = link as? String, let url = URL(string: s) {
+                NSWorkspace.shared.open(url)
+                return true
+            }
+            return false
+        }
     }
 }
 
