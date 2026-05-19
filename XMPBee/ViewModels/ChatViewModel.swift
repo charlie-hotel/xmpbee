@@ -591,6 +591,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     private func xmppDidAuthenticateMain(_ client: XMPPClient) async {
         guard let server = server(for: client) else { return }
         server.isConnected = true
+        // Server is its own ObservableObject; the views observe viewModel, so
+        // republish here to flip the input bar back on.
+        objectWillChange.send()
 
         // Reset reconnection state on successful connection
         reconnectionAttempts[server.id] = 0
@@ -656,6 +659,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         Task { @MainActor in
             guard let server = server(for: client) else { return }
             server.isConnected = false
+            // Same reason as in xmppDidAuthenticateMain — publish so the input bar
+            // observes the state flip and disables.
+            objectWillChange.send()
             let reason = error?.localizedDescription ?? "Connection closed"
             addSystemMessage(to: server, text: "Disconnected: \(reason)")
 

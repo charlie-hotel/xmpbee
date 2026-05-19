@@ -142,11 +142,18 @@ class XMPPConnection: NSObject, StreamDelegate {
 
     func disconnect() {
         send("</stream:stream>")
-        DispatchQueue.main.async {
-            self.onDisconnected?(nil)
-        }
+        // Tear the stream down on its own thread, THEN announce the disconnect.
+        // Announcing on main first lets the reconnect path start before the old
+        // stream thread has finished — and the new connection ends up racing the
+        // old one's still-pending writeBuffer mutations.  If the stream thread is
+        // already gone, performOnStreamThread drops this block (see below); that's
+        // safe because in that case onDisconnected was already fired by whichever
+        // error/end-encountered path tore the thread down.
         performOnStreamThread { [weak self] in
             self?.closeStreams()
+            DispatchQueue.main.async {
+                self?.onDisconnected?(nil)
+            }
         }
     }
 
@@ -162,12 +169,17 @@ class XMPPConnection: NSObject, StreamDelegate {
         }
     }
 
-    /// Run a block on the stream thread's RunLoop
+    /// Run a block on the stream thread's RunLoop.
+    ///
+    /// Every block passed here mutates state (writeBuffer, the streams themselves)
+    /// that MUST only be touched from the stream thread.  If the stream thread is
+    /// gone, the block is dropped — running it on the caller's thread (formerly main)
+    /// races the stream thread's tail-end work and traps inside Data's COW path.
+    /// Callers that need a completion notification should do so via onDisconnected
+    /// after closeStreams(), not by relying on this method to always invoke their block.
     private func performOnStreamThread(_ block: @escaping () -> Void) {
         guard let thread = streamThread, !thread.isCancelled else {
-            // Fallback: run directly if thread isn't available yet
-            block()
-            return
+            return // Stream is torn down — nothing valid to do.
         }
         // CFRunLoopPerformBlock doesn't exist on Thread, so use perform(_:on:)
         let wrapper = BlockRunner(block: block)

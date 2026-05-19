@@ -175,6 +175,14 @@ struct ChatView: View {
 
     // MARK: - Input Bar (glass)
 
+    /// True when sending a message would actually do something — i.e. there's a
+    /// selected room AND its server is currently connected.  Used to gate the
+    /// input bar so we don't queue sends into a torn-down connection, which is
+    /// what made the reconnect-race crash reachable in the first place.
+    private var canSendMessage: Bool {
+        viewModel.selectedRoom != nil && viewModel.selectedServer?.isConnected == true
+    }
+
     private var inputBar: some View {
         HStack(spacing: 6) {
             if let room = viewModel.selectedRoom {
@@ -186,14 +194,20 @@ struct ChatView: View {
                     .glassEffect(.clear, in: .capsule)
             }
 
-            TextField("Type a message...", text: $viewModel.inputText)
+            TextField(
+                canSendMessage ? "Type a message..." : "Disconnected — waiting to reconnect",
+                text: $viewModel.inputText
+            )
                 .font(Theme.monoFont)
                 .textFieldStyle(.plain)
                 .focused($isInputFocused)
+                .disabled(!canSendMessage)
                 .onSubmit {
+                    guard canSendMessage else { return }
                     viewModel.sendMessage()
                 }
                 .onKeyPress(.tab) {
+                    guard canSendMessage else { return .handled }
                     handleTabCompletion()
                     return .handled
                 }
