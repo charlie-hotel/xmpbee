@@ -1,11 +1,16 @@
 import Foundation
 
-/// Security mode matching Adium's options
+/// Security mode for the XMPP connection.
+///
+/// Both modes guarantee an encrypted channel before SASL credentials are sent.
+/// The previously-supported `opportunisticTLS` (try STARTTLS, silently fall back
+/// to cleartext if the server doesn't advertise it) was removed because it allowed
+/// a network attacker to strip the `<starttls/>` feature and harvest SCRAM proofs
+/// over plaintext — see RFC 7590 §3.4.  Saved settings holding the old raw value
+/// fall back to `.requireTLS` via the `SecurityMode(rawValue:)` initializer.
 enum SecurityMode: String {
-    case requireTLS       // STARTTLS required (default, like Adium's "Require SSL/TLS")
-    case opportunisticTLS // Try STARTTLS, fall back to plain if server doesn't offer it
-    case directTLS        // Legacy SSL on port 5223
-    // .none has been removed — unencrypted connections are not supported
+    case requireTLS  // STARTTLS required on port 5222 (default)
+    case directTLS   // Legacy SSL on port 5223
 }
 
 /// Low-level TCP connection with STARTTLS support using Foundation streams.

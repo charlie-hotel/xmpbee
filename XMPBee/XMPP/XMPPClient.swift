@@ -169,6 +169,19 @@ class XMPPClient: XMLStreamParserDelegate {
     // MARK: - SCRAM-SHA-1
 
     private func authenticateSCRAM() {
+        // CRITICAL SECURITY: never send SCRAM proofs over cleartext either — they
+        // permit offline dictionary attack against the user's password.  PLAIN has
+        // an analogous gate in authenticate(); this one keeps the same invariant
+        // for SCRAM, independent of how this method is reached.
+        let secMode = connection?.securityMode ?? .requireTLS
+        if !tlsNegotiated && secMode != .directTLS {
+            delegate?.xmpp(self, didFailWithError: .authenticationFailed(
+                "SCRAM-SHA-1 requires TLS. Connection is not encrypted."
+            ))
+            disconnect()
+            return
+        }
+
         // Generate client nonce (random base64 string)
         var nonceBytes = [UInt8](repeating: 0, count: 24)
         _ = SecRandomCopyBytes(kSecRandomDefault, nonceBytes.count, &nonceBytes)
@@ -550,22 +563,34 @@ class XMPPClient: XMLStreamParserDelegate {
     func parser(_ parser: XMLStreamParser, didReceiveStreamFeatures features: XMLStanza) {
         let secMode = connection?.securityMode ?? .requireTLS
 
-        // Step 1: If we haven't done TLS yet and the server offers STARTTLS, do it
+        // Step 1: If we haven't done TLS yet and we're not on directTLS, the server
+        // MUST offer STARTTLS — otherwise refuse to proceed.  There's no silent
+        // fall-back to cleartext (per RFC 7590 §3.4); the only encrypted-by-default
+        // mode that doesn't go through STARTTLS is directTLS on port 5223.
         if !tlsNegotiated && secMode != .directTLS {
             if features.child(named: "starttls") != nil {
                 initiateSTARTTLS()
                 return
-            } else if secMode == .requireTLS {
-                // TLS required but server doesn't offer STARTTLS
-                delegate?.xmpp(self, didFailWithError: .tlsRequired)
+            }
+            delegate?.xmpp(self, didFailWithError: .tlsRequired)
+            disconnect()
+            return
+        }
+
+        // Step 2: SASL mechanism selection.  By this point the channel is either
+        // STARTTLS-upgraded or directTLS-established; the defensive guard below
+        // catches anything that would let us authenticate over cleartext, even
+        // though removing opportunisticTLS already makes that path unreachable.
+        if let mechanisms = features.child(named: "mechanisms") {
+            // Belt-and-braces: never send any SASL credentials over a cleartext socket.
+            guard tlsNegotiated || secMode == .directTLS else {
+                delegate?.xmpp(self, didFailWithError: .authenticationFailed(
+                    "Refusing to send SASL credentials over an unencrypted connection."
+                ))
                 disconnect()
                 return
             }
-            // opportunisticTLS: server doesn't offer it, continue without
-        }
 
-        // Step 2: Check for SASL mechanisms (post-TLS or no-TLS)
-        if let mechanisms = features.child(named: "mechanisms") {
             let mechs = mechanisms.children(named: "mechanism").map { $0.text }
             // Prefer SCRAM-SHA-1 over PLAIN for better security
             if mechs.contains("SCRAM-SHA-1") {

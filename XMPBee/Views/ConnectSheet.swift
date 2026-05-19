@@ -77,7 +77,6 @@ struct ConnectSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Picker("", selection: $securityMode) {
                                 Text("Require SSL/TLS").tag(SecurityMode.requireTLS)
-                                Text("Opportunistic TLS").tag(SecurityMode.opportunisticTLS)
                                 Text("Direct TLS (port 5223)").tag(SecurityMode.directTLS)
                             }
                             .pickerStyle(.radioGroup)
@@ -87,12 +86,6 @@ struct ConnectSheet: View {
                             Text("\"Require SSL/TLS\" uses STARTTLS on port 5222 (recommended)")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
-
-                            if securityMode == .opportunisticTLS {
-                                Text("⚠️ Opportunistic TLS may fall back to an unencrypted connection if the server does not offer STARTTLS.")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.orange)
-                            }
                         }
                     }
                 }
