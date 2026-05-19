@@ -99,6 +99,10 @@ struct ServerSection: View {
                         viewModel.disconnect(server: server)
                     }
                 }
+                Button("Edit Account…") {
+                    viewModel.editingServer = server
+                    viewModel.showConnectSheet = true
+                }
             }
         }
     }

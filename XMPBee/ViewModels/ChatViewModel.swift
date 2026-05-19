@@ -19,6 +19,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     @Published var isLoadingRooms = false
     /// Incremented when the chat view should scroll to bottom (e.g. on initial connect)
     @Published var scrollToBottomTrigger = 0
+    /// When non-nil, the ConnectSheet opens in Edit mode against this server.
+    /// Set just before flipping showConnectSheet = true, cleared on dismiss.
+    @Published var editingServer: Server? = nil
 
     /// Notification manager
     let notifications = NotificationManager.shared
@@ -286,6 +289,121 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    private static func deletePasswordFromKeychain(for account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    // MARK: - Account inspection / edit / delete
+
+    /// The raw saved settings dict. Used by ConnectSheet's edit mode to pre-populate fields.
+    /// Returns nil if no account has ever been saved.
+    func savedSettings() -> [String: Any]? {
+        UserDefaults.standard.dictionary(forKey: Self.settingsKey)
+    }
+
+    /// Read the Keychain-stored password for a JID. Used by ConnectSheet's edit mode to
+    /// pre-populate the password field so the user can see/edit it without having to re-enter.
+    func savedPassword(for jid: String) -> String? {
+        Self.loadPasswordFromKeychain(for: jid)
+    }
+
+    /// Save edits to an existing account. Disconnects whatever's currently connected for this
+    /// server and reconnects using the new field values. Settings are persisted to UserDefaults
+    /// and the password is written to Keychain.
+    func updateAccount(
+        server: Server,
+        name: String, hostname: String, port: Int,
+        jid: String, password: String,
+        resource: String = "XMPBee",
+        securityMode: SecurityMode = .requireTLS,
+        nickname: String, conferenceServer: String, rooms: [String]
+    ) {
+        // Cancel any pending reconnect cycle from a prior dropped connection.
+        reconnectionTimers[server.id]?.invalidate()
+        reconnectionTimers[server.id] = nil
+        reconnectionAttempts[server.id] = 0
+        manuallyDisconnected.remove(server.id)
+
+        // Tear down the existing connection if any.
+        if let client = clients[server.id] {
+            client.disconnect()
+        }
+
+        // Update the in-memory Server model so the sidebar reflects the rename/host change.
+        server.name = name
+        server.hostname = hostname
+        server.port = port
+        server.jid = jid
+        server.isConnected = false
+
+        // Update the per-server pending config (nickname / conference server / room list).
+        pendingConfig[server.id] = (nickname: nickname, confServer: conferenceServer, rooms: rooms)
+
+        // Persist to UserDefaults + Keychain.
+        saveSettings(
+            name: name, hostname: hostname, port: port, jid: jid, password: password,
+            resource: resource, securityMode: securityMode, nickname: nickname,
+            conferenceServer: conferenceServer, rooms: rooms
+        )
+
+        // Surface the change in the UI before kicking the reconnect off.
+        objectWillChange.send()
+
+        // Reconnect using the new settings.  Reuse the existing XMPPClient where possible so
+        // pendingIQCallbacks / message routing line up after the round-trip.
+        let client = clients[server.id] ?? XMPPClient()
+        if clients[server.id] == nil {
+            client.delegate = self
+            clients[server.id] = client
+        }
+        addSystemMessage(to: server, text: "Reconnecting with updated settings...")
+        client.connect(
+            host: hostname, port: port, jid: jid, password: password,
+            resource: resource, securityMode: securityMode
+        )
+    }
+
+    /// Permanently remove an account: disconnect, drop in-memory state, delete the saved
+    /// settings dict (if it points at this account), and erase the Keychain password.
+    func deleteAccount(_ server: Server) {
+        // Disconnect and stop any pending reconnect timers.
+        manuallyDisconnected.insert(server.id)
+        reconnectionTimers[server.id]?.invalidate()
+        reconnectionTimers[server.id] = nil
+        reconnectionAttempts[server.id] = 0
+        if let client = clients[server.id] {
+            client.disconnect()
+        }
+
+        // Drop in-memory client + config maps for this server.
+        clients.removeValue(forKey: server.id)
+        pendingConfig.removeValue(forKey: server.id)
+
+        // Erase the Keychain entry for this account's JID.
+        Self.deletePasswordFromKeychain(for: server.jid)
+
+        // Clear the persisted settings dict, but only if it actually belongs to this account —
+        // we don't want a future multi-account version to clobber an unrelated config.
+        if let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
+           (dict["jid"] as? String) == server.jid {
+            UserDefaults.standard.removeObject(forKey: Self.settingsKey)
+        }
+
+        // Remove from the sidebar and refresh the selection.
+        servers.removeAll { $0.id == server.id }
+        if selectedServer?.id == server.id {
+            selectedServer = servers.first
+            selectedRoom = selectedServer?.rooms.first
+        }
+
+        objectWillChange.send()
     }
 
     func selectRoom(_ room: Room, on server: Server) {

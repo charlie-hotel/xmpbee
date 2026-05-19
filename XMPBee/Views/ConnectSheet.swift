@@ -1,8 +1,17 @@
 import SwiftUI
 
-/// Connection dialog matching Adium's XMPP account options
+/// Connection dialog matching Adium's XMPP account options.
+///
+/// Used in two modes:
+///   • Create — `editingServer` is nil, fields start blank, "Connect" submits via
+///     `addServerAndConnect`.
+///   • Edit — `editingServer` is set, fields are pre-populated from UserDefaults + Keychain on
+///     appear, "Save" submits via `updateAccount` (which disconnects-then-reconnects), and a
+///     destructive "Delete Account…" button appears.
 struct ConnectSheet: View {
     @ObservedObject var viewModel: ChatViewModel
+    /// nil = create mode, non-nil = edit mode for that Server.
+    var editingServer: Server? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var serverName = ""
@@ -18,9 +27,13 @@ struct ConnectSheet: View {
     // Security options matching Adium
     @State private var securityMode: SecurityMode = .requireTLS
 
+    @State private var showDeleteConfirm = false
+
+    private var isEditing: Bool { editingServer != nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Connect to XMPP Server")
+            Text(isEditing ? "Edit Account" : "Connect to XMPP Server")
                 .font(.system(size: 15, weight: .semibold))
 
             GroupBox("Account") {
@@ -111,17 +124,102 @@ struct ConnectSheet: View {
             }
 
             HStack {
+                if isEditing {
+                    Button("Delete Account…", role: .destructive) {
+                        showDeleteConfirm = true
+                    }
+                }
                 Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Connect") { connectAndDismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(jid.isEmpty || password.isEmpty)
+                Button("Cancel") {
+                    viewModel.editingServer = nil
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                Button(isEditing ? "Save" : "Connect") {
+                    if isEditing {
+                        saveEditAndDismiss()
+                    } else {
+                        connectAndDismiss()
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                // In edit mode, the password field may legitimately be left as the existing
+                // (pre-populated) value, so we don't require it to be re-entered.
+                .disabled(jid.isEmpty || (!isEditing && password.isEmpty))
             }
         }
         .padding(20)
         .frame(width: 520)
         // hostname is auto-derived from JID at connect time if left empty
+        .onAppear {
+            if isEditing { loadEditingValues() }
+        }
+        .alert("Delete Account?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if let server = editingServer {
+                    viewModel.deleteAccount(server)
+                }
+                viewModel.editingServer = nil
+                dismiss()
+            }
+        } message: {
+            Text("This disconnects the account, clears its saved settings, and removes its password from the Keychain. You'll need to re-enter everything to reconnect.")
+        }
+    }
+
+    /// Populate @State fields from persisted settings + Keychain when opening in edit mode.
+    private func loadEditingValues() {
+        guard let dict = viewModel.savedSettings() else { return }
+        serverName       = dict["name"]             as? String ?? ""
+        hostname         = dict["hostname"]         as? String ?? ""
+        port             = String(dict["port"]      as? Int    ?? 5222)
+        jid              = dict["jid"]              as? String ?? ""
+        resource         = dict["resource"]         as? String ?? "XMPBee"
+        nickname         = dict["nickname"]         as? String ?? ""
+        conferenceServer = dict["conferenceServer"] as? String ?? ""
+        roomsToJoin      = (dict["rooms"] as? [String] ?? []).joined(separator: ", ")
+        if let modeRaw = dict["securityMode"] as? String,
+           let mode = SecurityMode(rawValue: modeRaw) {
+            securityMode = mode
+        }
+        // Pre-populate the password from Keychain so it's visible (and editable) in the form.
+        if let saved = viewModel.savedPassword(for: jid) {
+            password = saved
+        }
+    }
+
+    private func saveEditAndDismiss() {
+        guard let server = editingServer else { return }
+        let trimmedJID = jid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isValidJID(trimmedJID) else { return }
+
+        let connectHost = hostname.isEmpty ? (trimmedJID.components(separatedBy: "@").last ?? "") : hostname
+        let name = serverName.isEmpty ? connectHost : serverName
+        let portNum = Int(port) ?? 5222
+        let nick = nickname.isEmpty ? (trimmedJID.components(separatedBy: "@").first ?? "user") : nickname
+        let res = resource.isEmpty ? "XMPBee" : resource
+        let confServer = conferenceServer.isEmpty
+            ? "conference.\(trimmedJID.components(separatedBy: "@").last ?? connectHost)"
+            : conferenceServer
+
+        let rooms = roomsToJoin
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        viewModel.updateAccount(
+            server: server,
+            name: name, hostname: connectHost, port: portNum,
+            jid: trimmedJID, password: password, resource: res,
+            securityMode: securityMode, nickname: nick,
+            conferenceServer: confServer, rooms: rooms
+        )
+
+        // Drop the password from @State so it doesn't linger in view memory.
+        password = ""
+        viewModel.editingServer = nil
+        dismiss()
     }
 
     private func field(_ label: String, text: Binding<String>, placeholder: String) -> some View {

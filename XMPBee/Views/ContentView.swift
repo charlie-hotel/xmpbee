@@ -34,6 +34,7 @@ struct ContentView: View {
             ToolbarItemGroup(placement: .automatic) {
                 Menu {
                     Button("New Connection...") {
+                        viewModel.editingServer = nil
                         viewModel.showConnectSheet = true
                     }
 
@@ -84,7 +85,10 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $viewModel.showConnectSheet) {
-            ConnectSheet(viewModel: viewModel)
+            // editingServer drives Create vs Edit mode.  Sidebar sets it before flipping
+            // showConnectSheet=true for "Edit Account…"; the Connect "+" toolbar item leaves
+            // it nil for create mode.  ConnectSheet clears it on dismiss.
+            ConnectSheet(viewModel: viewModel, editingServer: viewModel.editingServer)
         }
         .sheet(isPresented: $showPreferences) {
             PreferencesView(notifications: viewModel.notifications)
@@ -133,6 +137,7 @@ struct ContentView: View {
             viewModel.showBrowseRooms = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .xmpbeeConnectServer)) { _ in
+            viewModel.editingServer = nil
             viewModel.showConnectSheet = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .xmpbeeViewLogs)) { _ in
@@ -146,6 +151,7 @@ struct ContentView: View {
                 viewModel.loadAndReconnect()
                 if viewModel.servers.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        viewModel.editingServer = nil
                         viewModel.showConnectSheet = true
                     }
                 }
