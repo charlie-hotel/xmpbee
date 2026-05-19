@@ -170,7 +170,10 @@ struct ConnectSheet: View {
 
     /// Populate @State fields from persisted settings + Keychain when opening in edit mode.
     private func loadEditingValues() {
-        guard let dict = viewModel.savedSettings() else { return }
+        // Look up by the editing server's JID so we get *that* account's entry,
+        // not whatever the singular "current" account used to be.
+        guard let server = editingServer,
+              let dict = viewModel.savedSettings(forJID: server.jid) else { return }
         serverName       = dict["name"]             as? String ?? ""
         hostname         = dict["hostname"]         as? String ?? ""
         port             = String(dict["port"]      as? Int    ?? 5222)

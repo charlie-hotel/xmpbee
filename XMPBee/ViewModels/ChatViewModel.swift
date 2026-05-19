@@ -99,7 +99,10 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     }
 
     func reconnect(server: Server) {
-        guard let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
+        // Look up this specific account's saved settings by JID rather than reading
+        // a singular "current" dict — multiple accounts may be saved.
+        let accounts = Self.savedAccountsArray()
+        guard let dict = accounts.first(where: { ($0["jid"] as? String) == server.jid }),
               let jid = dict["jid"] as? String,
               let pw = Self.loadPasswordFromKeychain(for: jid),
               let _ = pendingConfig[server.id] else {
@@ -163,92 +166,155 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
     private static let settingsKey = "SavedServerSettings"
 
+    // MARK: - Saved accounts storage (multi-account, with legacy single-dict migration)
+    //
+    // The UserDefaults value under `settingsKey` is now an array of per-account dicts.
+    // Older builds stored a single dict here (one account); we read both shapes and
+    // always write the new array shape, so existing installs migrate on first save.
+
+    /// Read the saved-accounts array, transparently migrating the legacy single-dict
+    /// format into a single-element array.  Returns [] when nothing has been saved.
+    private static func savedAccountsArray() -> [[String: Any]] {
+        let raw = UserDefaults.standard.object(forKey: settingsKey)
+        if let array = raw as? [[String: Any]] {
+            return array
+        }
+        if let singleDict = raw as? [String: Any], !singleDict.isEmpty {
+            return [singleDict]
+        }
+        return []
+    }
+
+    /// Write the saved-accounts array.  Always uses the new array format.
+    private static func setSavedAccountsArray(_ accounts: [[String: Any]]) {
+        if accounts.isEmpty {
+            UserDefaults.standard.removeObject(forKey: settingsKey)
+        } else {
+            UserDefaults.standard.set(accounts, forKey: settingsKey)
+        }
+    }
+
+    /// Find the index of the account dict whose JID matches `jid`, or nil if none.
+    private static func savedAccountIndex(for jid: String, in accounts: [[String: Any]]) -> Int? {
+        accounts.firstIndex { ($0["jid"] as? String) == jid }
+    }
+
+    /// Mutate a single account dict (matched by JID) inside the saved array via the
+    /// provided closure, then write the array back.  No-op if no account with that JID.
+    private static func mutateSavedAccount(jid: String, _ mutate: (inout [String: Any]) -> Void) {
+        var accounts = savedAccountsArray()
+        guard let idx = savedAccountIndex(for: jid, in: accounts) else { return }
+        mutate(&accounts[idx])
+        setSavedAccountsArray(accounts)
+    }
+
     private func saveSettings(name: String, hostname: String, port: Int,
                               jid: String, password: String, resource: String,
                               securityMode: SecurityMode, nickname: String,
                               conferenceServer: String, rooms: [String]) {
-        // Preserve existing dmContacts
-        var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) ?? [:]
+        var accounts = Self.savedAccountsArray()
+
+        // Find existing entry by JID, or build a new one. Preserves per-account fields
+        // (dmContacts most importantly) on update.
+        var entry: [String: Any] = Self.savedAccountIndex(for: jid, in: accounts)
+            .map { accounts[$0] } ?? [:]
 
         // Update server settings
-        dict["name"] = name
-        dict["hostname"] = hostname
-        dict["port"] = port
-        dict["jid"] = jid
-        dict["resource"] = resource
-        dict["securityMode"] = securityMode.rawValue
-        dict["nickname"] = nickname
-        dict["conferenceServer"] = conferenceServer
-        dict["rooms"] = rooms
+        entry["name"] = name
+        entry["hostname"] = hostname
+        entry["port"] = port
+        entry["jid"] = jid
+        entry["resource"] = resource
+        entry["securityMode"] = securityMode.rawValue
+        entry["nickname"] = nickname
+        entry["conferenceServer"] = conferenceServer
+        entry["rooms"] = rooms
+        // Scrub any leftover plaintext password from legacy dicts the moment we touch them.
+        entry.removeValue(forKey: "password")
 
-        UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+        if let idx = Self.savedAccountIndex(for: jid, in: accounts) {
+            accounts[idx] = entry
+        } else {
+            accounts.append(entry)
+        }
+        Self.setSavedAccountsArray(accounts)
 
         // Store password in Keychain
         Self.savePasswordToKeychain(password, for: jid)
-
-        // Remove any leftover plaintext password from old versions
-        if var cleaned = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
-           cleaned["password"] != nil {
-            cleaned.removeValue(forKey: "password")
-            UserDefaults.standard.set(cleaned, forKey: Self.settingsKey)
-        }
     }
 
     func loadAndReconnect() {
-        guard let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
-        guard let jid = dict["jid"] as? String, !jid.isEmpty else { return }
+        // Read all saved accounts.  This transparently handles the legacy single-dict
+        // format (older builds saved one dict directly under the settings key).
+        var accounts = Self.savedAccountsArray()
+        guard !accounts.isEmpty else { return }
 
-        // Read password from Keychain (fall back to UserDefaults for migration)
-        var password: String
-        if let keychainPw = Self.loadPasswordFromKeychain(for: jid) {
-            password = keychainPw
-        } else if let legacyPw = dict["password"] as? String, !legacyPw.isEmpty {
-            // Migrate plaintext password to Keychain and scrub it from UserDefaults
-            Self.savePasswordToKeychain(legacyPw, for: jid)
-            var cleaned = dict
-            cleaned.removeValue(forKey: "password")
-            UserDefaults.standard.set(cleaned, forKey: Self.settingsKey)
-            password = legacyPw
-        } else {
-            return
+        var didMigrateLegacyPassword = false
+
+        for (idx, dict) in accounts.enumerated() {
+            guard let jid = dict["jid"] as? String, !jid.isEmpty else { continue }
+
+            // Resolve the password: Keychain is the source of truth; fall back to any
+            // leftover plaintext "password" key from very old single-dict installs and
+            // migrate it across.
+            var password: String
+            if let keychainPw = Self.loadPasswordFromKeychain(for: jid) {
+                password = keychainPw
+            } else if let legacyPw = dict["password"] as? String, !legacyPw.isEmpty {
+                Self.savePasswordToKeychain(legacyPw, for: jid)
+                accounts[idx].removeValue(forKey: "password")
+                didMigrateLegacyPassword = true
+                password = legacyPw
+            } else {
+                continue
+            }
+            defer { password = "" }
+            guard !password.isEmpty else { continue }
+
+            let name = dict["name"] as? String ?? ""
+            let hostname = dict["hostname"] as? String ?? ""
+            let port = dict["port"] as? Int ?? 5222
+            let resource = dict["resource"] as? String ?? "XMPBee"
+            let modeRaw = dict["securityMode"] as? String ?? "requireTLS"
+            let securityMode = SecurityMode(rawValue: modeRaw) ?? .requireTLS
+            let nickname = dict["nickname"] as? String ?? ""
+            let conferenceServer = dict["conferenceServer"] as? String ?? ""
+            let rooms = dict["rooms"] as? [String] ?? []
+
+            addServerAndConnect(
+                name: name, hostname: hostname, port: port,
+                jid: jid, password: password, resource: resource,
+                securityMode: securityMode, nickname: nickname,
+                conferenceServer: conferenceServer, rooms: rooms
+            )
         }
-        defer { password = "" }
-        guard !password.isEmpty else { return }
 
-        let name = dict["name"] as? String ?? ""
-        let hostname = dict["hostname"] as? String ?? ""
-        let port = dict["port"] as? Int ?? 5222
-        let resource = dict["resource"] as? String ?? "XMPBee"
-        let modeRaw = dict["securityMode"] as? String ?? "requireTLS"
-        let securityMode = SecurityMode(rawValue: modeRaw) ?? .requireTLS
-        let nickname = dict["nickname"] as? String ?? ""
-        let conferenceServer = dict["conferenceServer"] as? String ?? ""
-        let rooms = dict["rooms"] as? [String] ?? []
+        // If we migrated any plaintext passwords, rewrite the array sans those keys
+        // so the next launch doesn't see them again.  Also collapses any legacy
+        // single-dict on-disk format into the new array format.
+        if didMigrateLegacyPassword {
+            Self.setSavedAccountsArray(accounts)
+        }
 
-        addServerAndConnect(name: name, hostname: hostname, port: port,
-                           jid: jid, password: password, resource: resource,
-                           securityMode: securityMode, nickname: nickname,
-                           conferenceServer: conferenceServer, rooms: rooms)
-
-        // DM contacts will be restored in xmppDidAuthenticate() after connection
+        // DM contacts will be restored per account in xmppDidAuthenticate() after connection
     }
 
-    private func appendSavedRoom(_ name: String) {
-        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
-        var rooms = dict["rooms"] as? [String] ?? []
-        if !rooms.contains(name) {
-            rooms.append(name)
-            dict["rooms"] = rooms
-            UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+    private func appendSavedRoom(_ name: String, forJID jid: String) {
+        Self.mutateSavedAccount(jid: jid) { entry in
+            var rooms = entry["rooms"] as? [String] ?? []
+            if !rooms.contains(name) {
+                rooms.append(name)
+                entry["rooms"] = rooms
+            }
         }
     }
 
-    private func removeSavedRoom(_ name: String) {
-        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
-        var rooms = dict["rooms"] as? [String] ?? []
-        rooms.removeAll { $0 == name }
-        dict["rooms"] = rooms
-        UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+    private func removeSavedRoom(_ name: String, forJID jid: String) {
+        Self.mutateSavedAccount(jid: jid) { entry in
+            var rooms = entry["rooms"] as? [String] ?? []
+            rooms.removeAll { $0 == name }
+            entry["rooms"] = rooms
+        }
     }
 
     // MARK: - Keychain
@@ -302,10 +368,12 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
     // MARK: - Account inspection / edit / delete
 
-    /// The raw saved settings dict. Used by ConnectSheet's edit mode to pre-populate fields.
-    /// Returns nil if no account has ever been saved.
-    func savedSettings() -> [String: Any]? {
-        UserDefaults.standard.dictionary(forKey: Self.settingsKey)
+    /// The saved settings dict for a specific account (by JID).  Used by ConnectSheet's
+    /// edit mode to pre-populate fields.  Returns nil if no account with that JID has
+    /// been saved.
+    func savedSettings(forJID jid: String) -> [String: Any]? {
+        let accounts = Self.savedAccountsArray()
+        return accounts.first { ($0["jid"] as? String) == jid }
     }
 
     /// Read the Keychain-stored password for a JID. Used by ConnectSheet's edit mode to
@@ -334,6 +402,17 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // Tear down the existing connection if any.
         if let client = clients[server.id] {
             client.disconnect()
+        }
+
+        // If the JID itself was changed, the saved entry under the old JID is now
+        // orphaned — remove it (and its Keychain password) before saveSettings upserts
+        // the new entry, so we don't end up with two array entries for the same Server.
+        let oldJID = server.jid
+        if oldJID != jid {
+            var accounts = Self.savedAccountsArray()
+            accounts.removeAll { ($0["jid"] as? String) == oldJID }
+            Self.setSavedAccountsArray(accounts)
+            Self.deletePasswordFromKeychain(for: oldJID)
         }
 
         // Update the in-memory Server model so the sidebar reflects the rename/host change.
@@ -389,12 +468,11 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // Erase the Keychain entry for this account's JID.
         Self.deletePasswordFromKeychain(for: server.jid)
 
-        // Clear the persisted settings dict, but only if it actually belongs to this account —
-        // we don't want a future multi-account version to clobber an unrelated config.
-        if let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
-           (dict["jid"] as? String) == server.jid {
-            UserDefaults.standard.removeObject(forKey: Self.settingsKey)
-        }
+        // Remove only this account's entry from the saved-accounts array; other
+        // accounts in the array stay put.
+        var accounts = Self.savedAccountsArray()
+        accounts.removeAll { ($0["jid"] as? String) == server.jid }
+        Self.setSavedAccountsArray(accounts)
 
         // Remove from the sidebar and refresh the selection.
         servers.removeAll { $0.id == server.id }
@@ -443,7 +521,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             if let config = pendingConfig[server.id] {
                 let roomJID = "\(roomName)@\(config.confServer)"
                 joinSingleRoom(server: server, client: client, roomJID: roomJID, roomName: roomName, nickname: config.nickname)
-                appendSavedRoom(roomName)
+                appendSavedRoom(roomName, forJID: server.jid)
             }
         } else if text.hasPrefix("/part") || text.hasPrefix("/leave") {
             client.leaveRoom(jid: room.jid, nickname: room.nickname)
@@ -486,12 +564,12 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     func leaveRoom(_ room: Room, on server: Server) {
         if room.isDM {
             // Remove from saved DM contacts
-            removeSavedDM(room.name)
+            removeSavedDM(room.name, forJID: server.jid)
         } else {
             // Send XMPP leave presence
             clients[server.id]?.leaveRoom(jid: room.jid, nickname: room.nickname)
             // Remove from saved rooms
-            removeSavedRoom(room.name)
+            removeSavedRoom(room.name, forJID: server.jid)
         }
         // Remove from UI
         server.rooms.removeAll { $0.id == room.id }
@@ -511,7 +589,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         guard !server.rooms.contains(where: { $0.jid == roomJID }) else { return }
         joinSingleRoom(server: server, client: client, roomJID: roomJID, roomName: name, nickname: config.nickname)
         objectWillChange.send()
-        appendSavedRoom(name)
+        appendSavedRoom(name, forJID: server.jid)
     }
 
     /// Get the nickname we're using on a server
@@ -574,10 +652,15 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
         server.rooms.append(dmRoom)
         objectWillChange.send()
-        if save { appendSavedDM(nick) }
+        if save { appendSavedDM(nick, forJID: server.jid) }
 
-        // Load history on a background thread — file I/O + parsing must not block the main thread
+        // Load history on a background thread — file I/O + parsing must not block the main thread.
+        // We don't capture `dmRoom` directly because Room is a non-Sendable class and the
+        // background closure is @Sendable; instead we capture its UUID and re-resolve on the
+        // main thread when we go to mutate.
         let serverName = server.name
+        let serverID = server.id
+        let dmRoomID = dmRoom.id
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let history = LogManager.shared.loadRecentHistory(
                 server: serverName,
@@ -586,10 +669,13 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 limit: 100
             )
             guard !history.isEmpty else { return }
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self,
+                      let server = self.servers.first(where: { $0.id == serverID }),
+                      let room = server.rooms.first(where: { $0.id == dmRoomID }) else { return }
                 // Insert before any real-time messages that may have arrived while loading
-                dmRoom.messages.insert(contentsOf: history, at: 0)
-                self?.objectWillChange.send()
+                room.messages.insert(contentsOf: history, at: 0)
+                self.objectWillChange.send()
             }
         }
 
@@ -598,40 +684,35 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
     // MARK: - DM Contact Persistence
 
-    private func appendSavedDM(_ nick: String) {
+    private func appendSavedDM(_ nick: String, forJID jid: String) {
         #if DEBUG
-        print("[DM] appendSavedDM called for: \(nick)")
+        print("[DM] appendSavedDM called for: \(nick) on account \(jid)")
         #endif
-        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else {
+        Self.mutateSavedAccount(jid: jid) { entry in
+            var dms = entry["dmContacts"] as? [String] ?? []
             #if DEBUG
-            print("[DM] ERROR: No settings dict found in UserDefaults")
+            print("[DM] Current DM contacts: \(dms)")
             #endif
-            return
-        }
-        var dms = dict["dmContacts"] as? [String] ?? []
-        #if DEBUG
-        print("[DM] Current DM contacts: \(dms)")
-        #endif
-        if !dms.contains(nick) {
-            dms.append(nick)
-            dict["dmContacts"] = dms
-            UserDefaults.standard.set(dict, forKey: Self.settingsKey)
-            #if DEBUG
-            print("[DM] Saved DM contact. New list: \(dms)")
-            #endif
-        } else {
-            #if DEBUG
-            print("[DM] DM contact already exists, not saving")
-            #endif
+            if !dms.contains(nick) {
+                dms.append(nick)
+                entry["dmContacts"] = dms
+                #if DEBUG
+                print("[DM] Saved DM contact. New list: \(dms)")
+                #endif
+            } else {
+                #if DEBUG
+                print("[DM] DM contact already exists, not saving")
+                #endif
+            }
         }
     }
 
-    private func removeSavedDM(_ nick: String) {
-        guard var dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey) else { return }
-        var dms = dict["dmContacts"] as? [String] ?? []
-        dms.removeAll { $0 == nick }
-        dict["dmContacts"] = dms
-        UserDefaults.standard.set(dict, forKey: Self.settingsKey)
+    private func removeSavedDM(_ nick: String, forJID jid: String) {
+        Self.mutateSavedAccount(jid: jid) { entry in
+            var dms = entry["dmContacts"] as? [String] ?? []
+            dms.removeAll { $0 == nick }
+            entry["dmContacts"] = dms
+        }
     }
 
     // MARK: - Internal Helpers
@@ -747,9 +828,10 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 }
             }
 
-            // Restore saved DMs with delays
-            if let dict = UserDefaults.standard.dictionary(forKey: Self.settingsKey),
-               let dmContacts = dict["dmContacts"] as? [String], !dmContacts.isEmpty {
+            // Restore saved DMs with delays — scoped to *this* account, not the
+            // legacy singular settings dict.
+            if let accountDict = savedSettings(forJID: server.jid),
+               let dmContacts = accountDict["dmContacts"] as? [String], !dmContacts.isEmpty {
                 #if DEBUG
                 print("[DM] Restoring \(dmContacts.count) DM contact(s): \(dmContacts)")
                 #endif
