@@ -17,6 +17,13 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     @Published var errorMessage = ""
     @Published var discoveredRooms: [(jid: String, name: String)] = []
     @Published var isLoadingRooms = false
+    @Published var showUserSearch = false
+    @Published var discoveredUsers: [(jid: String, nick: String, name: String)] = []
+    @Published var isSearchingUsers = false
+    @Published var userSearchError: String? = nil
+    /// Per-server cache of the disco-detected XEP-0055 search service JID, so we don't
+    /// re-discover on every keystroke.  Cleared on disconnect / reconnect of a server.
+    private var userSearchServices: [UUID: String] = [:]
     /// Incremented when the chat view should scroll to bottom (e.g. on initial connect)
     @Published var scrollToBottomTrigger = 0
     /// When non-nil, the ConnectSheet opens in Edit mode against this server.
@@ -464,6 +471,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // Drop in-memory client + config maps for this server.
         clients.removeValue(forKey: server.id)
         pendingConfig.removeValue(forKey: server.id)
+        userSearchServices.removeValue(forKey: server.id)
 
         // Erase the Keychain entry for this account's JID.
         Self.deletePasswordFromKeychain(for: server.jid)
@@ -606,6 +614,54 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         client.requestRoomList(from: config.confServer) { [weak self] rooms in
             self?.discoveredRooms = rooms.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             self?.isLoadingRooms = false
+        }
+    }
+
+    /// XEP-0055 user search against the server's directory service.  Discovers the
+    /// search service on first use (cached per-server thereafter), then sends the term
+    /// and publishes the results into `discoveredUsers` for the popover to render.
+    ///
+    /// IQ callbacks come back on the main thread (XMLStreamParser dispatches via
+    /// DispatchQueue.main.async before invoking handleIQ), so this routine doesn't
+    /// need to hop the actor explicitly — same pattern as browseRooms.
+    func searchUsers(query: String, on server: Server) {
+        guard let client = clients[server.id] else { return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        userSearchError = nil
+        discoveredUsers = []
+        guard !trimmed.isEmpty else { return }
+
+        isSearchingUsers = true
+
+        let runSearch: (String) -> Void = { [weak self] serviceJID in
+            guard let self = self else { return }
+            client.searchUsers(at: serviceJID, query: trimmed) { [weak self] results, error in
+                guard let self = self else { return }
+                self.isSearchingUsers = false
+                self.userSearchError = error
+                self.discoveredUsers = results.sorted {
+                    // Sort by display name, falling back to nick, then JID.
+                    let lhs = $0.name.isEmpty ? ($0.nick.isEmpty ? $0.jid : $0.nick) : $0.name
+                    let rhs = $1.name.isEmpty ? ($1.nick.isEmpty ? $1.jid : $1.nick) : $1.name
+                    return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                }
+            }
+        }
+
+        if let cached = userSearchServices[server.id] {
+            runSearch(cached)
+            return
+        }
+
+        client.discoverUserSearchService(on: server.domain) { [weak self] serviceJID in
+            guard let self = self else { return }
+            guard let serviceJID = serviceJID else {
+                self.isSearchingUsers = false
+                self.userSearchError = "This server doesn't advertise a user search service."
+                return
+            }
+            self.userSearchServices[server.id] = serviceJID
+            runSearch(serviceJID)
         }
     }
 

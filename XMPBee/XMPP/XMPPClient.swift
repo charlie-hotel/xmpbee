@@ -401,6 +401,90 @@ class XMPPClient: XMLStreamParserDelegate {
         connection?.send(iq)
     }
 
+    // MARK: - User Search (XEP-0055)
+
+    /// Disco the server's components, probe each for `jabber:iq:search` support, return
+    /// the JID of the first one that advertises it.  Used to find the directory/user
+    /// component (typically `search.<domain>`) without hard-coding its name.
+    func discoverUserSearchService(on domain: String, completion: @escaping (String?) -> Void) {
+        let id = nextIQId()
+        let iq = "<iq to='\(domain.xmlEscaped)' type='get' id='\(id.xmlEscaped)'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>"
+        pendingIQCallbacks[id] = { [weak self] stanza in
+            guard let self = self else { completion(nil); return }
+            if stanza["type"] == "error" {
+                completion(nil)
+                return
+            }
+            guard let query = stanza.child(named: "query") else { completion(nil); return }
+            let candidates = query.children(named: "item").compactMap { $0["jid"] }
+            self.probeForUserSearch(candidates: candidates, completion: completion)
+        }
+        connection?.send(iq)
+    }
+
+    /// Walk the candidate component JIDs one at a time, disco#info each, return the
+    /// first that lists `jabber:iq:search` as a feature.  Sequential rather than parallel
+    /// to keep the IQ callback bookkeeping simple — server lists are tiny in practice.
+    private func probeForUserSearch(candidates: [String], completion: @escaping (String?) -> Void) {
+        guard let first = candidates.first else { completion(nil); return }
+        let rest = Array(candidates.dropFirst())
+
+        let id = nextIQId()
+        let iq = "<iq to='\(first.xmlEscaped)' type='get' id='\(id.xmlEscaped)'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>"
+        pendingIQCallbacks[id] = { [weak self] stanza in
+            guard let self = self else { completion(nil); return }
+            if stanza["type"] != "error",
+               let info = stanza.child(named: "query") {
+                let features = info.children(named: "feature").compactMap { $0["var"] }
+                if features.contains("jabber:iq:search") {
+                    completion(first)
+                    return
+                }
+            }
+            self.probeForUserSearch(candidates: rest, completion: completion)
+        }
+        connection?.send(iq)
+    }
+
+    /// XEP-0055 search.  Sends the term against the `nick` field — the field that
+    /// every common server implementation supports.  Returns parsed (jid, nick, name)
+    /// tuples plus an optional error string from the server.
+    func searchUsers(
+        at service: String,
+        query: String,
+        completion: @escaping ([(jid: String, nick: String, name: String)], String?) -> Void
+    ) {
+        let id = nextIQId()
+        let iq = """
+        <iq to='\(service.xmlEscaped)' type='set' id='\(id.xmlEscaped)'>\
+        <query xmlns='jabber:iq:search'>\
+        <nick>\(query.xmlEscaped)</nick>\
+        </query></iq>
+        """
+        pendingIQCallbacks[id] = { stanza in
+            if stanza["type"] == "error" {
+                let reason = stanza.child(named: "error")?.children.first?.name ?? "Search failed"
+                completion([], reason)
+                return
+            }
+            guard let query = stanza.child(named: "query") else {
+                completion([], nil)
+                return
+            }
+            var results: [(jid: String, nick: String, name: String)] = []
+            for item in query.children(named: "item") {
+                let jid = item["jid"] ?? ""
+                let nick = item.child(named: "nick")?.text ?? ""
+                let first = item.child(named: "first")?.text ?? ""
+                let last  = item.child(named: "last")?.text ?? ""
+                let name = [first, last].filter { !$0.isEmpty }.joined(separator: " ")
+                results.append((jid: jid, nick: nick, name: name))
+            }
+            completion(results, nil)
+        }
+        connection?.send(iq)
+    }
+
     // MARK: - Presence
 
     func sendPresence(show: String? = nil, status: String? = nil) {

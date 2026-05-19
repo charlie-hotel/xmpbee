@@ -337,6 +337,117 @@ struct RoomBrowserPopover: View {
     }
 }
 
+// MARK: - User Search
+
+/// XEP-0055 user-directory search popover.  Mirrors the room browser in shape but
+/// goes through the server's directory/user component rather than the MUC conference.
+struct UserSearchPopover: View {
+    @ObservedObject var viewModel: ChatViewModel
+    let server: Server
+    @Binding var query: String
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Search Users")
+                .font(.headline)
+
+            HStack {
+                TextField("Search by nick…", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .onSubmit(runSearch)
+                Button("Search", action: runSearch)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if viewModel.isSearchingUsers {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Searching…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 20)
+            } else if let error = viewModel.userSearchError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .padding(.vertical, 6)
+            } else if viewModel.discoveredUsers.isEmpty {
+                Text(query.isEmpty ? "Type a nickname or name and press Search."
+                                   : "No matches.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 10)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(viewModel.discoveredUsers, id: \.jid) { user in
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(user.name.isEmpty
+                                         ? (user.nick.isEmpty ? user.jid : user.nick)
+                                         : user.name)
+                                        .font(.system(size: 12))
+                                        .lineLimit(1)
+                                    Text(user.jid)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer()
+                                Button("DM") {
+                                    // Pick the nick if provided; otherwise fall back to the
+                                    // JID local-part.  openDM constructs the DM target from
+                                    // this — see findOrCreateDMRoom.
+                                    let target = !user.nick.isEmpty
+                                        ? user.nick
+                                        : (user.jid.components(separatedBy: "@").first ?? user.jid)
+                                    viewModel.openDM(nick: target, on: server)
+                                    isPresented = false
+                                }
+                                .font(.system(size: 11))
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            .padding(.vertical, 2)
+                            .padding(.horizontal, 4)
+                        }
+                    }
+                }
+                Text("\(viewModel.discoveredUsers.count) result\(viewModel.discoveredUsers.count == 1 ? "" : "s")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    isPresented = false
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding()
+        .frame(width: 340, height: 500)
+    }
+
+    private func runSearch() {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        viewModel.searchUsers(query: trimmed, on: server)
+    }
+}
+
 // MARK: - FocusedValues for sidebar focus tracking
 
 struct SidebarHasFocusKey: FocusedValueKey {

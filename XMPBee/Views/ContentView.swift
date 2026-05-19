@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var browseFilter = ""
     @State private var joinRoomName = ""
     @State private var dmNickname = ""
+    @State private var userSearchQuery = ""
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -69,6 +70,27 @@ struct ContentView: View {
                             server: server,
                             filter: $browseFilter,
                             isPresented: $viewModel.showBrowseRooms
+                        )
+                    }
+                }
+
+                Button(action: {
+                    userSearchQuery = ""
+                    viewModel.discoveredUsers = []
+                    viewModel.userSearchError = nil
+                    viewModel.showUserSearch = true
+                }) {
+                    Label("Search Users", systemImage: "person.text.rectangle")
+                }
+                .help("Search Users")
+                .disabled(viewModel.servers.isEmpty)
+                .popover(isPresented: $viewModel.showUserSearch) {
+                    if let server = viewModel.selectedServer ?? viewModel.servers.first {
+                        UserSearchPopover(
+                            viewModel: viewModel,
+                            server: server,
+                            query: $userSearchQuery,
+                            isPresented: $viewModel.showUserSearch
                         )
                     }
                 }
