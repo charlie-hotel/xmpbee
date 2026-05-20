@@ -328,36 +328,60 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
     private static let keychainService = "com.xmpbee.app"
 
+    /// Base attributes that identify a Keychain entry for an account.  Used as the
+    /// matching query for both lookup and update.
+    ///
+    /// We deliberately do NOT set `kSecUseDataProtectionKeychain: true`.  On macOS
+    /// the data-protection keychain requires `keychain-access-groups` entitlement
+    /// for unsandboxed apps; without it, writes can silently fail with
+    /// errSecMissingEntitlement and leave the user with no saved password (which
+    /// looks like "settings aren't being persisted" from their side).  The legacy
+    /// macOS keychain is the unsandboxed default and works for any signed app.
+    /// If XMPBee adds proper entitlements later, opting back into the
+    /// data-protection keychain is a one-line change here.
+    private static func keychainBaseQuery(for account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
     private static func savePasswordToKeychain(_ password: String, for account: String) {
         guard let data = password.data(using: .utf8) else { return }
 
-        // Delete any existing entry first
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        // Add new entry
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account,
+        // Try to update an existing entry first; only fall back to add if no entry
+        // exists yet.  Compared to the older delete-then-add pattern, this is atomic
+        // — there's no window where the entry is briefly absent (e.g. if the process
+        // is killed between the delete and the add), and it avoids touching access
+        // control attributes on an existing entry.
+        let matchQuery = keychainBaseQuery(for: account)
+        let updateAttributes: [String: Any] = [
             kSecValueData as String: data,
+            // `WhenUnlocked` (not `WhenUnlockedThisDeviceOnly`) keeps the door open
+            // for opting future entries into iCloud Keychain sync by flipping
+            // `kSecAttrSynchronizable` on writes.  `ThisDeviceOnly` would foreclose
+            // that option — entries written under it can't later be made syncable
+            // without rewriting each one.  The entry is still local-only today
+            // since we don't set kSecAttrSynchronizable.
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]
-        SecItemAdd(addQuery as CFDictionary, nil)
+
+        let updateStatus = SecItemUpdate(matchQuery as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            // No entry yet — add one.
+            var addQuery = matchQuery
+            addQuery[kSecValueData as String] = data
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+            SecItemAdd(addQuery as CFDictionary, nil)
+        }
     }
 
     private static func loadPasswordFromKeychain(for account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        var query = keychainBaseQuery(for: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else { return nil }
@@ -365,12 +389,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     }
 
     private static func deletePasswordFromKeychain(for account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(keychainBaseQuery(for: account) as CFDictionary)
     }
 
     // MARK: - Account inspection / edit / delete
@@ -544,7 +563,12 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 sendDM(to: nick, body: body, in: room, on: server)
             }
         } else if room.isDM {
-            // In a DM tab, send as a direct chat message to nick@server
+            // In a DM (or MUC PM) tab.  For both, the reply target is room.jid:
+            //   • Regular DM: jid is "nick@server" (the recipient's bare JID).
+            //   • MUC PM (isMUCPM=true): jid is "room@service/nick" (the full
+            //     occupant JID, per XEP-0045 §7.5).
+            // sendDirectMessage sends type="chat" to that address, which is
+            // correct in both cases.
             client.sendDirectMessage(to: room.jid, body: text)
             let msg = ChatMessage(
                 timestamp: Date(), sender: room.nickname, body: text,
@@ -553,10 +577,12 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             room.messages.append(msg)
             objectWillChange.send()
 
-            // Log outgoing DM
+            // Log outgoing message under a path that distinguishes MUC PMs from
+            // regular DMs (different identity model — see findOrCreateMUCPMRoom).
+            let logRoom = room.isMUCPM ? "MUCPM-\(room.name)" : "DM-\(room.name)"
             LogManager.shared.logMessage(
                 server: server.name,
-                room: "DM-\(room.name)",
+                room: logRoom,
                 timestamp: msg.timestamp,
                 sender: room.nickname,
                 body: text,
@@ -571,8 +597,12 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
     func leaveRoom(_ room: Room, on server: Server) {
         if room.isDM {
-            // Remove from saved DM contacts
-            removeSavedDM(room.name, forJID: server.jid)
+            // Regular DMs persist as dmContacts and need an explicit removal.
+            // MUC PMs are intentionally not persisted (room-scoped identity), so
+            // there's nothing to remove for them.
+            if !room.isMUCPM {
+                removeSavedDM(room.name, forJID: server.jid)
+            }
         } else {
             // Send XMPP leave presence
             clients[server.id]?.leaveRoom(jid: room.jid, nickname: room.nickname)
@@ -694,6 +724,35 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         selectedServer = server
     }
 
+    /// Find or create a Room representing a MUC private-message thread (XEP-0045 §7.5).
+    ///
+    /// The Room's `jid` is the FULL occupant JID (`room@service/nick`) — that's what
+    /// `sendMessage`'s DM branch will send back to, which is the correct reply target
+    /// per XEP-0045 §7.5.  Crucially we do NOT call `appendSavedDM` here: MUC
+    /// participant JIDs are room-scoped and shouldn't be persisted as long-term
+    /// contacts (the participant disappears when they leave the room or change nicks).
+    private func findOrCreateMUCPMRoom(
+        replyJID: String,
+        peerNick: String,
+        roomLabel: String,
+        server: Server
+    ) -> Room {
+        // Look up by full reply JID, restricted to MUC PM rooms so we don't
+        // collide with a real DM that happens to share part of the name.
+        if let existing = server.rooms.first(where: { $0.isMUCPM && $0.jid == replyJID }) {
+            return existing
+        }
+
+        let nickname = pendingConfig[server.id]?.nickname ?? "me"
+        let pm = Room(jid: replyJID, name: "\(peerNick) @ \(roomLabel)", nickname: nickname)
+        pm.isDM = true
+        pm.isMUCPM = true
+        pm.initialPresenceComplete = true
+        server.rooms.append(pm)
+        objectWillChange.send()
+        return pm
+    }
+
     private func findOrCreateDMRoom(nick: String, server: Server, save: Bool = true) -> Room {
         let dmJID = "\(nick)@\(server.domain)"
         // Check if we already have a DM tab for this user
@@ -796,8 +855,10 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     }
 
     private func joinSingleRoom(server: Server, client: XMPPClient, roomJID: String, roomName: String, nickname: String) {
-        // Check if room already exists (e.g., from a previous connection)
-        if let existingRoom = server.rooms.first(where: { $0.jid == roomJID }) {
+        // Check if MUC already exists (e.g., from a previous connection).  Filter
+        // !isDM so a DM tab whose constructed JID coincidentally matches the MUC
+        // address can't get promoted/reused as a MUC.
+        if let existingRoom = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) {
             // Reuse existing room to preserve message history
             existingRoom.messages.append(ChatMessage(
                 timestamp: Date(), sender: "", body: "Rejoining \(existingRoom.displayName)...",
@@ -942,17 +1003,89 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         let roomJID = parts.first ?? fullFrom
         let nick = parts.count > 1 ? parts[1] : fullFrom
 
-        // Handle incoming DMs (type="chat" from user@server or user@server/resource)
+        // Handle incoming type="chat" messages.  Two cases:
+        //   1. MUC private message (XEP-0045 §7.5) — from = "room@service/nick".
+        //      The bare-JID portion is a ROOM, not a user.  Reply target is the
+        //      full occupant JID, NOT a constructed user JID.
+        //   2. Regular DM — from = "user@server[/resource]".  Bare JID identifies
+        //      the user account; reply target is that bare JID.
         if message.type == "chat" {
-            // Extract the bare JID (nick@server) — the sender
-            let bareFrom = roomJID  // parts[0] = "nick@server"
+            let bareFrom = roomJID  // parts[0]
+
+            // MUC PM detection:
+            //   • Primary: server tagged the stanza with <x xmlns="…muc#user"/>.
+            //   • Fallback: the bare JID matches a MUC the client has joined.
+            // Both checks are needed — some servers omit the marker, and some
+            // markers (without bare-JID match) could be from a room we haven't
+            // joined yet (rare but possible).
+            let joinedMUC = server.rooms.first(where: { !$0.isDM && $0.jid == bareFrom })
+            let looksLikeMUCPM = message.isMUCPrivateMessage || joinedMUC != nil
+
+            if looksLikeMUCPM, parts.count > 1 {
+                // It's a MUC PM.  Sender is the resource part (participant's MUC
+                // nick), reply target is the full occupant JID.  Don't pollute
+                // the DM contacts list and don't construct a bare DM JID from
+                // the room's local-part (the original MA-002 bug).
+                let participantNick = nick
+                let safeParticipantNick = participantNick.sanitizedForNicknameDisplay()
+                let roomLabel = joinedMUC?.displayName ?? bareFrom
+
+                let pmRoom = findOrCreateMUCPMRoom(
+                    replyJID: fullFrom,
+                    peerNick: safeParticipantNick,
+                    roomLabel: roomLabel,
+                    server: server
+                )
+
+                let timestamp = message.timestamp ?? Date()
+                let chatMsg = ChatMessage(
+                    timestamp: timestamp, sender: safeParticipantNick, body: message.body,
+                    type: .chat, senderColor: ChatMessage.colorForNick(safeParticipantNick)
+                )
+
+                if message.isDelayed {
+                    let isDuplicate = pmRoom.messages.contains { existing in
+                        existing.sender == chatMsg.sender &&
+                        existing.body == chatMsg.body &&
+                        abs(existing.timestamp.timeIntervalSince(chatMsg.timestamp)) < 2.0
+                    }
+                    if isDuplicate { return }
+                }
+
+                pmRoom.messages.append(chatMsg)
+                objectWillChange.send()
+
+                LogManager.shared.logMessage(
+                    server: server.name,
+                    room: "MUCPM-\(roomLabel)-\(participantNick)",
+                    timestamp: timestamp,
+                    sender: participantNick,
+                    body: message.body,
+                    type: "chat"
+                )
+
+                if pmRoom.id != selectedRoom?.id && !message.isDelayed {
+                    pmRoom.unreadCount += 1
+                }
+                notifications.notifyDirectMessage(
+                    sender: "\(safeParticipantNick) (\(roomLabel))",
+                    body: message.body
+                )
+                if notifications.playSound {
+                    notifications.playAlertSound()
+                }
+                return
+            }
+
+            // Regular DM path — bare JID is the sender's user account.
             let senderNick = bareFrom.components(separatedBy: "@").first ?? bareFrom
+            let safeSenderNick = senderNick.sanitizedForNicknameDisplay()
 
             let dmRoom = findOrCreateDMRoom(nick: senderNick, server: server)
             let timestamp = message.timestamp ?? Date()
             let chatMsg = ChatMessage(
-                timestamp: timestamp, sender: senderNick, body: message.body,
-                type: .chat, senderColor: ChatMessage.colorForNick(senderNick)
+                timestamp: timestamp, sender: safeSenderNick, body: message.body,
+                type: .chat, senderColor: ChatMessage.colorForNick(safeSenderNick)
             )
 
             // Deduplicate DM history messages against loaded log history
@@ -971,12 +1104,15 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             objectWillChange.send()
 
             // Log DM to disk
-            // If it was a duplicate, we already returned early, so if we're here it's new
+            // If it was a duplicate, we already returned early, so if we're here it's new.
+            // The raw senderNick is used in the room-path identifier so logs stay
+            // grouped by the same identity across runs; the body's `sender` field
+            // gets the sanitized form so spoofing markers persist in the archive.
             LogManager.shared.logMessage(
                 server: server.name,
                 room: "DM-\(senderNick)",
                 timestamp: timestamp,
-                sender: senderNick,
+                sender: safeSenderNick,
                 body: message.body,
                 type: "chat"
             )
@@ -985,14 +1121,19 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             if dmRoom.id != selectedRoom?.id && !message.isDelayed {
                 dmRoom.unreadCount += 1
             }
-            notifications.notifyDirectMessage(sender: senderNick, body: message.body)
+            notifications.notifyDirectMessage(sender: safeSenderNick, body: message.body)
             if notifications.playSound {
                 notifications.playAlertSound()
             }
             return
         }
 
-        guard let room = server.rooms.first(where: { $0.jid == roomJID }) else { return }
+        // MUC routing: only match actual MUC rooms (not DM/MUC-PM tabs).  Without
+        // this !isDM filter, a DM tab whose constructed JID coincidentally matches
+        // a server-side MUC service address would receive groupchat-typed stanzas
+        // from that address and render them as if they were chat messages —
+        // exactly the "mirrored DM" bug pattern.
+        guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
         let timestamp = message.timestamp ?? Date()
 
@@ -1001,12 +1142,17 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         let body = isAction ? String(message.body.dropFirst(4)) : message.body
         let type: ChatMessage.MessageType = isAction ? .action : .chat
 
+        // Sanitize the MUC nick before storing it — closes Unicode-spoofing
+        // attacks (homoglyphs, bidi overrides, zero-width chars) on the sender
+        // label rendered in the transcript.
+        let safeNick = nick.sanitizedForNicknameDisplay()
+
         let chatMsg = ChatMessage(
             timestamp: timestamp,
-            sender: nick,
+            sender: safeNick,
             body: body,
             type: type,
-            senderColor: ChatMessage.colorForNick(nick)
+            senderColor: ChatMessage.colorForNick(safeNick)
         )
 
         // Deduplicate: if this is delayed (history) message, check if we already have it
@@ -1024,18 +1170,20 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         room.messages.append(chatMsg)
         objectWillChange.send()
 
-        // Log to disk
-        // If it was a duplicate, we already returned early, so if we're here it's new
+        // Log to disk.  Sender is sanitized so spoofing markers persist into the
+        // archive; the raw nick is otherwise discarded at this layer.
         LogManager.shared.logMessage(
             server: server.name,
             room: room.name,
             timestamp: timestamp,
-            sender: nick,
+            sender: safeNick,
             body: body,
             type: type == .chat ? "chat" : "action"
         )
 
-        // Only badge real-time messages as unread, not history
+        // Only badge real-time messages as unread, not history.  "Is this from me?"
+        // compares against the user's own nick (room.nickname), which is user-set
+        // and not wire-derived — no sanitization needed on the LHS.
         if room.id != selectedRoom?.id && !message.isDelayed {
             room.unreadCount += 1
         }
@@ -1050,7 +1198,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             if message.type == "groupchat" {
                 notifications.notifyGroupMessage(
                     room: room.displayName,
-                    sender: nick,
+                    sender: safeNick,
                     body: body,
                     mentionsMe: mentionsMe
                 )
@@ -1060,7 +1208,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                     notifications.playAlertSound()
                 }
             } else if message.type == "chat" {
-                notifications.notifyDirectMessage(sender: nick, body: body)
+                notifications.notifyDirectMessage(sender: safeNick, body: body)
 
                 // Always play sound for DMs
                 if notifications.playSound {
@@ -1079,7 +1227,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     private func xmppDidReceivePresenceMain(_ client: XMPPClient, presence: XMPPPresence) async {
         guard let server = server(for: client) else { return }
         guard let roomJID = presence.roomJID, let nick = presence.nick else { return }
-        guard let room = server.rooms.first(where: { $0.jid == roomJID }) else { return }
+        // MUC presence only belongs to actual MUC rooms — never to DM or MUC-PM tabs.
+        guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
         let affiliation: Occupant.Affiliation = {
             switch presence.affiliation {
@@ -1100,15 +1249,20 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             }
         }()
 
+        // Sanitize the nick for display use (system messages, notifications).
+        // The raw `nick` is still used to match against occupants because that's
+        // the wire identifier — the server uses it for routing and uniqueness.
+        let safeNick = nick.sanitizedForNicknameDisplay()
+
         if presence.type == "unavailable" {
             room.occupants.removeAll { $0.nick == nick }
             if room.initialPresenceComplete {
                 let msg = ChatMessage(
-                    timestamp: Date(), sender: nick, body: "",
-                    type: .part, senderColor: ChatMessage.colorForNick(nick)
+                    timestamp: Date(), sender: safeNick, body: "",
+                    type: .part, senderColor: ChatMessage.colorForNick(safeNick)
                 )
                 room.messages.append(msg)
-                notifications.notifyJoinPart(room: room.displayName, user: nick, joined: false)
+                notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: false)
             }
         } else {
             let occupant = Occupant(nick: nick, affiliation: affiliation, role: role)
@@ -1141,11 +1295,11 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                     let insertIdx = room.occupants.firstIndex(where: { occupant < $0 }) ?? room.occupants.endIndex
                     room.occupants.insert(occupant, at: insertIdx)
                     let msg = ChatMessage(
-                        timestamp: Date(), sender: nick, body: "",
-                        type: .join, senderColor: ChatMessage.colorForNick(nick)
+                        timestamp: Date(), sender: safeNick, body: "",
+                        type: .join, senderColor: ChatMessage.colorForNick(safeNick)
                     )
                     room.messages.append(msg)
-                    notifications.notifyJoinPart(room: room.displayName, user: nick, joined: true)
+                    notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: true)
                 }
             }
         }
@@ -1155,7 +1309,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     nonisolated func xmpp(_ client: XMPPClient, didReceiveRoomSubject subject: String, room roomJID: String) {
         Task { @MainActor in
             guard let server = server(for: client) else { return }
-            guard let room = server.rooms.first(where: { $0.jid == roomJID }) else { return }
+            // Room subjects only belong to actual MUC rooms.
+            guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
             room.topic = subject
             // Only show topic in chat once per session, not on every reconnect

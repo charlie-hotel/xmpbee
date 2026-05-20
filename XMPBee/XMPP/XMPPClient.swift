@@ -18,6 +18,13 @@ struct XMPPIncomingMessage {
     let type: String       // "groupchat", "chat", "normal"
     let timestamp: Date?   // delayed delivery timestamp
     let isDelayed: Bool    // history replay
+    /// True if the stanza carried an `<x xmlns="http://jabber.org/protocol/muc#user"/>`
+    /// child element.  Per XEP-0045 §7.5, MUC servers SHOULD include this marker on
+    /// private messages between participants so clients can tell them apart from
+    /// regular DMs (where `from` is a user JID with a resource).  Without this
+    /// disambiguation the room JID's local-part would be mis-parsed as the sender's
+    /// username — see MA-002 in the security audit for the impact.
+    let isMUCPrivateMessage: Bool
 }
 
 struct XMPPPresence {
@@ -67,13 +74,43 @@ class XMPPClient: XMLStreamParserDelegate {
     /// Whether STARTTLS is pending (waiting for <proceed/>)
     private var startTLSPending = false
 
-    /// SCRAM-SHA-1 state
+    /// SCRAM state (works for both SCRAM-SHA-1 and SCRAM-SHA-256)
     private var scramClientNonce: String = ""
     private var scramClientFirstMessageBare: String = ""
     private var scramServerSignature: Data?
+    /// Which SCRAM hash variant the current handshake is using.  Set when we send
+    /// `<auth mechanism="SCRAM-SHA-{1,256}">`, consulted in handleSCRAMChallenge to
+    /// pick the right PBKDF2 / HMAC / digest functions.
+    private var scramVariant: SCRAMHashVariant?
 
-    private var pendingIQCallbacks: [String: (XMLStanza) -> Void] = [:]
-    private var iqCounter = 0
+    /// A pending IQ request awaiting a response.  The expectedFrom field locks the
+    /// response down to the JID we addressed the request to — without it, any
+    /// authenticated peer who guesses the request ID can forge a result.
+    ///
+    /// `expectedFrom`:
+    ///   • Non-empty: the bare `to` attribute we put on the request.  The
+    ///     response's `from` must match this exactly (the server stamps it).
+    ///   • Empty: the request had no `to` attribute (server-directed — bind,
+    ///     session, ping).  The response must come from the user's own server
+    ///     domain, or carry no `from` at all (some servers omit it for
+    ///     server-directed responses).
+    private struct PendingIQ {
+        let expectedFrom: String
+        let expiresAt: Date
+        let callback: (XMLStanza) -> Void
+    }
+    private var pendingIQCallbacks: [String: PendingIQ] = [:]
+
+    /// Maximum lifetime of a pending IQ callback.  Late-arriving forged responses
+    /// after this window can't trigger callbacks the user has moved on from.
+    private let pendingIQTimeout: TimeInterval = 30
+
+    /// Random IDs assigned to the bind and session-establishment IQs at connect
+    /// time.  Previously these were hardcoded `bind_1` / `session_1`, which was
+    /// only exploitable during the pre-bind window (server-only) but became a
+    /// trivial fix once we moved to random IDs for everything else.
+    private var pendingBindID: String?
+    private var pendingSessionID: String?
 
     // MARK: - Keepalive (XEP-0199)
     private var pingTimer: Timer?
@@ -95,6 +132,10 @@ class XMPPClient: XMLStreamParserDelegate {
         self.startTLSPending = false
 
         connection = XMPPConnection(host: host, port: port, securityMode: securityMode)
+        // The fast-path ping responder uses this to reject pings that don't come
+        // from the user's own server (closes a presence-leak oracle — see
+        // XMPPConnection.handlePingFast for the full rationale).
+        connection?.expectedPingSourceJID = self.domain
 
         connection?.onConnected = { [weak self] in
             self?.openStream()
@@ -120,6 +161,8 @@ class XMPPClient: XMLStreamParserDelegate {
     func disconnect() {
         stopPingTimer()
         pendingIQCallbacks.removeAll()
+        pendingBindID = nil
+        pendingSessionID = nil
         connection?.disconnect()
     }
 
@@ -166,9 +209,9 @@ class XMPPClient: XMLStreamParserDelegate {
         connection?.send(sasl)
     }
 
-    // MARK: - SCRAM-SHA-1
+    // MARK: - SCRAM (SHA-1 / SHA-256)
 
-    private func authenticateSCRAM() {
+    private func authenticateSCRAM(variant: SCRAMHashVariant) {
         // CRITICAL SECURITY: never send SCRAM proofs over cleartext either — they
         // permit offline dictionary attack against the user's password.  PLAIN has
         // an analogous gate in authenticate(); this one keeps the same invariant
@@ -176,11 +219,13 @@ class XMPPClient: XMLStreamParserDelegate {
         let secMode = connection?.securityMode ?? .requireTLS
         if !tlsNegotiated && secMode != .directTLS {
             delegate?.xmpp(self, didFailWithError: .authenticationFailed(
-                "SCRAM-SHA-1 requires TLS. Connection is not encrypted."
+                "\(variant.mechanismName) requires TLS. Connection is not encrypted."
             ))
             disconnect()
             return
         }
+
+        scramVariant = variant
 
         // Generate client nonce (random base64 string)
         var nonceBytes = [UInt8](repeating: 0, count: 24)
@@ -199,11 +244,18 @@ class XMPPClient: XMLStreamParserDelegate {
         let clientFirstMessage = "n,,\(scramClientFirstMessageBare)"
         let base64 = Data(clientFirstMessage.utf8).base64EncodedString()
 
-        let sasl = "<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='SCRAM-SHA-1'>\(base64)</auth>"
+        let sasl = "<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='\(variant.mechanismName)'>\(base64)</auth>"
         connection?.send(sasl)
     }
 
     private func handleSCRAMChallenge(_ challenge: String) {
+        // Pull the variant we set in authenticateSCRAM.  If somehow missing, abort —
+        // we shouldn't be processing a challenge for a handshake we didn't start.
+        guard let variant = scramVariant else {
+            delegate?.xmpp(self, didFailWithError: .authenticationFailed("Unexpected SCRAM challenge (no variant set)"))
+            return
+        }
+
         guard let challengeData = Data(base64Encoded: challenge),
               let challengeStr = String(data: challengeData, encoding: .utf8) else {
             delegate?.xmpp(self, didFailWithError: .authenticationFailed("Invalid SCRAM challenge"))
@@ -231,17 +283,28 @@ class XMPPClient: XMLStreamParserDelegate {
             return
         }
 
-        // Compute SaltedPassword using PBKDF2-HMAC-SHA1
-        guard let saltedPassword = pbkdf2SHA1(password: password, salt: saltData, iterations: iterations) else {
+        // RFC 5802 mandates a minimum of 4096 PBKDF2 iterations.  A hostile or
+        // compromised server can advertise i=1 to make offline brute-force of the
+        // password effectively free; refuse to proceed under that floor.
+        let scramMinIterations = 4096
+        guard iterations >= scramMinIterations else {
+            delegate?.xmpp(self, didFailWithError: .authenticationFailed(
+                "SCRAM iteration count below RFC 5802 minimum (\(iterations) < \(scramMinIterations))."
+            ))
+            return
+        }
+
+        // Compute SaltedPassword using PBKDF2-HMAC-<variant>
+        guard let saltedPassword = pbkdf2(variant: variant, password: password, salt: saltData, iterations: iterations) else {
             delegate?.xmpp(self, didFailWithError: .authenticationFailed("SCRAM crypto failed"))
             return
         }
 
         // ClientKey = HMAC(SaltedPassword, "Client Key")
-        let clientKey = hmacSHA1(key: saltedPassword, data: Data("Client Key".utf8))
+        let clientKey = hmac(variant: variant, key: saltedPassword, data: Data("Client Key".utf8))
 
-        // StoredKey = SHA1(ClientKey)
-        let storedKey = sha1(clientKey)
+        // StoredKey = H(ClientKey)
+        let storedKey = digest(variant: variant, clientKey)
 
         // Client-final-message-without-proof: c=biws (base64("n,,")),r=<nonce>
         let channelBinding = Data("n,,".utf8).base64EncodedString()
@@ -251,16 +314,16 @@ class XMPPClient: XMLStreamParserDelegate {
         let authMessage = "\(scramClientFirstMessageBare),\(challengeStr),\(clientFinalWithoutProof)"
 
         // ClientSignature = HMAC(StoredKey, AuthMessage)
-        let clientSignature = hmacSHA1(key: storedKey, data: Data(authMessage.utf8))
+        let clientSignature = hmac(variant: variant, key: storedKey, data: Data(authMessage.utf8))
 
         // ClientProof = ClientKey XOR ClientSignature
         let clientProof = xor(clientKey, clientSignature)
 
         // ServerKey = HMAC(SaltedPassword, "Server Key")
-        let serverKey = hmacSHA1(key: saltedPassword, data: Data("Server Key".utf8))
+        let serverKey = hmac(variant: variant, key: saltedPassword, data: Data("Server Key".utf8))
 
-        // ServerSignature = HMAC(ServerKey, AuthMessage) - save for verification
-        scramServerSignature = hmacSHA1(key: serverKey, data: Data(authMessage.utf8))
+        // ServerSignature = HMAC(ServerKey, AuthMessage) - save for verification on <success>
+        scramServerSignature = hmac(variant: variant, key: serverKey, data: Data(authMessage.utf8))
 
         // Send client-final-message
         let clientFinal = "\(clientFinalWithoutProof),p=\(clientProof.base64EncodedString())"
@@ -286,11 +349,11 @@ class XMPPClient: XMLStreamParserDelegate {
         return serverSig == expectedSig
     }
 
-    // MARK: - SCRAM Crypto Helpers
+    // MARK: - SCRAM Crypto Helpers (variant-parameterized)
 
-    private func pbkdf2SHA1(password: String, salt: Data, iterations: Int) -> Data? {
+    private func pbkdf2(variant: SCRAMHashVariant, password: String, salt: Data, iterations: Int) -> Data? {
         let passwordData = password.data(using: .utf8)!
-        var derivedKey = Data(repeating: 0, count: 20) // SHA1 = 20 bytes
+        var derivedKey = Data(repeating: 0, count: variant.digestLength)
 
         let result = derivedKey.withUnsafeMutableBytes { derivedKeyBytes in
             salt.withUnsafeBytes { saltBytes in
@@ -298,9 +361,9 @@ class XMPPClient: XMLStreamParserDelegate {
                     CCPBKDFAlgorithm(kCCPBKDF2),
                     password, passwordData.count,
                     saltBytes.baseAddress?.assumingMemoryBound(to: UInt8.self), salt.count,
-                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1),
+                    variant.ccPrfAlgorithm,
                     UInt32(iterations),
-                    derivedKeyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self), 20
+                    derivedKeyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self), variant.digestLength
                 )
             }
         }
@@ -308,28 +371,35 @@ class XMPPClient: XMLStreamParserDelegate {
         return result == kCCSuccess ? derivedKey : nil
     }
 
-    private func hmacSHA1(key: Data, data: Data) -> Data {
-        var hmac = Data(repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
-        hmac.withUnsafeMutableBytes { hmacBytes in
+    private func hmac(variant: SCRAMHashVariant, key: Data, data: Data) -> Data {
+        var out = Data(repeating: 0, count: variant.digestLength)
+        out.withUnsafeMutableBytes { outBytes in
             key.withUnsafeBytes { keyBytes in
                 data.withUnsafeBytes { dataBytes in
                     CCHmac(
-                        CCHmacAlgorithm(kCCHmacAlgSHA1),
+                        variant.ccHmacAlgorithm,
                         keyBytes.baseAddress, key.count,
                         dataBytes.baseAddress, data.count,
-                        hmacBytes.baseAddress
+                        outBytes.baseAddress
                     )
                 }
             }
         }
-        return hmac
+        return out
     }
 
-    private func sha1(_ data: Data) -> Data {
-        var hash = Data(repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+    private func digest(variant: SCRAMHashVariant, _ data: Data) -> Data {
+        var hash = Data(repeating: 0, count: variant.digestLength)
         data.withUnsafeBytes { dataBytes in
             hash.withUnsafeMutableBytes { hashBytes in
-                CC_SHA1(dataBytes.baseAddress, CC_LONG(data.count), hashBytes.baseAddress?.assumingMemoryBound(to: UInt8.self))
+                let outPtr = hashBytes.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                let len = CC_LONG(data.count)
+                switch variant {
+                case .sha1:
+                    CC_SHA1(dataBytes.baseAddress, len, outPtr)
+                case .sha256:
+                    CC_SHA256(dataBytes.baseAddress, len, outPtr)
+                }
             }
         }
         return hash
@@ -346,8 +416,10 @@ class XMPPClient: XMLStreamParserDelegate {
     // MARK: - Resource Binding & Session
 
     private func bindResource() {
+        let id = nextIQId()
+        pendingBindID = id
         let iq = """
-        <iq type='set' id='bind_1'>\
+        <iq type='set' id='\(id.xmlEscaped)'>\
         <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>\
         <resource>\(resource.xmlEscaped)</resource>\
         </bind></iq>
@@ -356,7 +428,9 @@ class XMPPClient: XMLStreamParserDelegate {
     }
 
     private func startSession() {
-        let iq = "<iq type='set' id='session_1'><session xmlns='urn:ietf:params:xml:ns:xmpp-session'/></iq>"
+        let id = nextIQId()
+        pendingSessionID = id
+        let iq = "<iq type='set' id='\(id.xmlEscaped)'><session xmlns='urn:ietf:params:xml:ns:xmpp-session'/></iq>"
         connection?.send(iq)
     }
 
@@ -400,7 +474,7 @@ class XMPPClient: XMLStreamParserDelegate {
     func requestRoomList(from service: String, completion: @escaping ([(jid: String, name: String)]) -> Void) {
         let id = nextIQId()
         let iq = "<iq to='\(service.xmlEscaped)' type='get' id='\(id.xmlEscaped)'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>"
-        pendingIQCallbacks[id] = { stanza in
+        registerPendingIQ(id: id, expectedFrom: service) { stanza in
             var rooms: [(jid: String, name: String)] = []
             if let query = stanza.child(named: "query") {
                 for item in query.children(named: "item") {
@@ -422,7 +496,7 @@ class XMPPClient: XMLStreamParserDelegate {
     func discoverUserSearchService(on domain: String, completion: @escaping (String?) -> Void) {
         let id = nextIQId()
         let iq = "<iq to='\(domain.xmlEscaped)' type='get' id='\(id.xmlEscaped)'><query xmlns='http://jabber.org/protocol/disco#items'/></iq>"
-        pendingIQCallbacks[id] = { [weak self] stanza in
+        registerPendingIQ(id: id, expectedFrom: domain) { [weak self] stanza in
             guard let self = self else { completion(nil); return }
             if stanza["type"] == "error" {
                 completion(nil)
@@ -444,7 +518,7 @@ class XMPPClient: XMLStreamParserDelegate {
 
         let id = nextIQId()
         let iq = "<iq to='\(first.xmlEscaped)' type='get' id='\(id.xmlEscaped)'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>"
-        pendingIQCallbacks[id] = { [weak self] stanza in
+        registerPendingIQ(id: id, expectedFrom: first) { [weak self] stanza in
             guard let self = self else { completion(nil); return }
             if stanza["type"] != "error",
                let info = stanza.child(named: "query") {
@@ -474,7 +548,7 @@ class XMPPClient: XMLStreamParserDelegate {
         <nick>\(query.xmlEscaped)</nick>\
         </query></iq>
         """
-        pendingIQCallbacks[id] = { stanza in
+        registerPendingIQ(id: id, expectedFrom: service) { stanza in
             if stanza["type"] == "error" {
                 let reason = stanza.child(named: "error")?.children.first?.name ?? "Search failed"
                 completion([], reason)
@@ -526,8 +600,11 @@ class XMPPClient: XMLStreamParserDelegate {
 
     private func sendKeepalivePing() {
         let id = nextIQId()
-        let iq = "<iq type='get' id='\(id)'><ping xmlns='urn:xmpp:ping'/></iq>"
-        pendingIQCallbacks[id] = { [weak self] _ in
+        // No `to` on the IQ — ping is server-directed.  Expected from is "" which
+        // the registerPendingIQ validator interprets as "accept empty or our own
+        // server's bare domain" (matches both stamping conventions in the wild).
+        let iq = "<iq type='get' id='\(id.xmlEscaped)'><ping xmlns='urn:xmpp:ping'/></iq>"
+        registerPendingIQ(id: id, expectedFrom: "") { [weak self] _ in
             // Any response (result or error) means the connection is alive
             self?.pingTimeoutTimer?.invalidate()
             self?.pingTimeoutTimer = nil
@@ -545,9 +622,71 @@ class XMPPClient: XMLStreamParserDelegate {
 
     // MARK: - Helpers
 
+    /// Generate a fresh cryptographically-random IQ ID.  96 bits (24 hex chars) is
+    /// well past the threshold where an attacker could blind-guess the next ID
+    /// (~2^-95 odds per attempt).  Falls back to a counter only if SecRandomCopyBytes
+    /// fails, which on a healthy macOS doesn't happen.
     private func nextIQId() -> String {
-        iqCounter += 1
-        return "iq_\(iqCounter)"
+        var bytes = [UInt8](repeating: 0, count: 12)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        if status == errSecSuccess {
+            return bytes.map { String(format: "%02x", $0) }.joined()
+        }
+        // Defensive fallback — should never hit this on macOS.
+        return "iq_\(Int.random(in: 1...Int.max))"
+    }
+
+    /// Register a pending IQ callback with strict from/type validation.  Callers pass
+    /// the JID they addressed the request to (or "" for server-directed requests).
+    /// The dispatch path in handleIQ() will refuse to invoke the callback unless the
+    /// response actually came from that JID and is of type "result" or "error".
+    private func registerPendingIQ(
+        id: String,
+        expectedFrom: String,
+        callback: @escaping (XMLStanza) -> Void
+    ) {
+        // Drop any callbacks that have aged past the timeout — limits the pending
+        // dict's growth and prevents late forgeries from invoking abandoned
+        // callbacks.  Cheap O(n) sweep on the small dict, runs only at registration.
+        sweepExpiredPendingIQs()
+        pendingIQCallbacks[id] = PendingIQ(
+            expectedFrom: expectedFrom,
+            expiresAt: Date().addingTimeInterval(pendingIQTimeout),
+            callback: callback
+        )
+    }
+
+    private func sweepExpiredPendingIQs() {
+        let now = Date()
+        pendingIQCallbacks = pendingIQCallbacks.filter { $0.value.expiresAt > now }
+    }
+
+    /// Validate that an IQ result's `from` attribute matches what the request was
+    /// addressed to.  See the PendingIQ doc for the case analysis.
+    private func isValidIQResponseFrom(_ responseFrom: String, expectedFrom: String) -> Bool {
+        let userServer = self.domain
+        if expectedFrom.isEmpty {
+            // Server-directed request (bind, session, ping — `to` was unset, so
+            // the server is the implicit destination).  The 96-bit random ID is
+            // the load-bearing security boundary here; `from` validation is
+            // defense-in-depth, and we don't want to reject a legitimate server
+            // response just because the server chose to stamp a `from` attribute
+            // we couldn't predict.  Accept any of:
+            //   • empty (most common — Prosody, ejabberd, etc.)
+            //   • our server's bare domain (some servers identify themselves)
+            //   • our own bare JID (Openfire stamps this on bind results)
+            //   • a full JID whose bare part is our own JID (server-assigned resource)
+            if responseFrom.isEmpty { return true }
+            if responseFrom == userServer { return true }
+            if responseFrom == self.jid { return true }
+            if responseFrom.hasPrefix(self.jid + "/") { return true }
+            return false
+        }
+        // Targeted request — strict match, with one allowance: an empty from is
+        // acceptable only when the target WAS our own server (some servers omit it).
+        if responseFrom == expectedFrom { return true }
+        if responseFrom.isEmpty && expectedFrom == userServer { return true }
+        return false
     }
 
     // MARK: - XMLStreamParserDelegate
@@ -592,9 +731,16 @@ class XMPPClient: XMLStreamParserDelegate {
             }
 
             let mechs = mechanisms.children(named: "mechanism").map { $0.text }
-            // Prefer SCRAM-SHA-1 over PLAIN for better security
-            if mechs.contains("SCRAM-SHA-1") {
-                authenticateSCRAM()
+            // Mechanism preference (strongest first):
+            //   1. SCRAM-SHA-256 (RFC 7677) — modern default
+            //   2. SCRAM-SHA-1  (RFC 5802) — legacy fallback
+            //   3. PLAIN        — last resort, gated by TLS above
+            // Channel-binding `-PLUS` variants are not yet supported (would need
+            // tls-exporter or tls-server-end-point material from the TLS stream).
+            if mechs.contains("SCRAM-SHA-256") {
+                authenticateSCRAM(variant: .sha256)
+            } else if mechs.contains("SCRAM-SHA-1") {
+                authenticateSCRAM(variant: .sha1)
             } else if mechs.contains("PLAIN") {
                 authenticate()
             } else {
@@ -612,6 +758,21 @@ class XMPPClient: XMLStreamParserDelegate {
     }
 
     func parser(_ parser: XMLStreamParser, didReceiveStanza stanza: XMLStanza) {
+        // STARTTLS phase enforcement (RFC 6120 §5.4.3.3): once we've sent
+        // <starttls/>, the only valid responses are <proceed/> or <failure/>.
+        // Any other stanza arriving in that window is a protocol violation —
+        // most likely a MITM trying to slip injected content past the gate.
+        // Refuse to act on it and disconnect.  (The XMLStreamParser-level gate
+        // already suppresses post-<proceed/> stanzas; this catches the inverse:
+        // stanzas other than proceed/failure arriving BEFORE <proceed/>.)
+        if startTLSPending && stanza.name != "proceed" && stanza.name != "failure" {
+            delegate?.xmpp(self, didFailWithError: .streamError(
+                "Unexpected stanza <\(stanza.name)> while awaiting STARTTLS response."
+            ))
+            disconnect()
+            return
+        }
+
         switch stanza.name {
         case "proceed":
             // STARTTLS: server says proceed — upgrade the connection to TLS
@@ -625,12 +786,20 @@ class XMPPClient: XMLStreamParserDelegate {
             handleSCRAMChallenge(challengeText)
 
         case "success":
-            // SASL auth succeeded
-            // For SCRAM, verify server signature
+            // SASL auth succeeded.
+            //
+            // For SCRAM, the server MUST include the v=ServerSignature proof per
+            // RFC 5802 §3 — it's how the server demonstrates knowledge of the
+            // user's password and provides mutual authentication.  An empty
+            // <success/> payload is a protocol violation, and treating it as
+            // "verification skipped" lets a MITM that terminated TLS in front
+            // of the real server bypass server-identity proof entirely.
             if let sig = scramServerSignature, !sig.isEmpty {
                 let successText = stanza.text
-                if !successText.isEmpty && !verifySCRAMSuccess(successText) {
-                    delegate?.xmpp(self, didFailWithError: .authenticationFailed("SCRAM server verification failed"))
+                guard !successText.isEmpty, verifySCRAMSuccess(successText) else {
+                    delegate?.xmpp(self, didFailWithError: .authenticationFailed(
+                        "SCRAM server verification failed (missing or invalid server signature)."
+                    ))
                     disconnect()
                     return
                 }
@@ -643,6 +812,7 @@ class XMPPClient: XMLStreamParserDelegate {
             scramClientNonce = ""
             scramClientFirstMessageBare = ""
             scramServerSignature = nil
+            scramVariant = nil
             openStream()
 
         case "failure":
@@ -684,36 +854,54 @@ class XMPPClient: XMLStreamParserDelegate {
     private func handleIQ(_ iq: XMLStanza) {
         let type = iq["type"] ?? ""
         let id = iq["id"] ?? ""
+        let from = iq["from"] ?? ""
 
         // Pings are handled at the connection layer (fast path on stream thread)
         // so we just ignore them here
         if type == "get", iq.child(named: "ping") != nil { return }
 
+        // Bind / session handshake — match by the random IDs we generated at
+        // request time.  Both are server-directed, so the response's `from`
+        // should be empty or our own server's domain.
         if type == "result" {
-            if id == "bind_1", let bind = iq.child(named: "bind"),
-               let boundJid = bind.child(named: "jid") {
-                self.boundJID = boundJid.text
-                startSession()
-            } else if id == "session_1" {
-                // Session established — we're fully connected
+            if let bindID = pendingBindID, id == bindID {
+                pendingBindID = nil
+                guard isValidIQResponseFrom(from, expectedFrom: "") else { return }
+                if let bind = iq.child(named: "bind"),
+                   let boundJid = bind.child(named: "jid") {
+                    self.boundJID = boundJid.text
+                    startSession()
+                }
+                return
+            }
+            if let sessionID = pendingSessionID, id == sessionID {
+                pendingSessionID = nil
+                guard isValidIQResponseFrom(from, expectedFrom: "") else { return }
                 sendPresence()
                 startPingTimer()
                 delegate?.xmppDidAuthenticate(self)
-            }
-
-            // Disco results (room list)
-            if let query = iq.child(named: "query") {
-                let items = query.children(named: "item")
-                if !items.isEmpty {
-                    // This is a disco#items result — handled by callback or delegate
-                }
+                return
             }
         }
 
-        // Check pending callbacks
-        if let callback = pendingIQCallbacks.removeValue(forKey: id) {
-            callback(iq)
-        }
+        // Generic pending-callback dispatch.  Only `result` and `error` are valid
+        // responses to a request we issued — anything else (an attacker injecting
+        // a `set` or `get` with the same ID) gets dropped silently.
+        guard type == "result" || type == "error" else { return }
+
+        guard let pending = pendingIQCallbacks.removeValue(forKey: id) else { return }
+
+        // Expired pending callback — drop the response.  This closes the late-
+        // forgery window where a response arrives after the user has moved on.
+        if pending.expiresAt < Date() { return }
+
+        // Validate that the response actually came from where we sent the request.
+        // The server stamps `from` on inbound stanzas with the authenticated
+        // origin, so an attacker can't claim to be a different JID at the
+        // protocol level — this is what makes the validation load-bearing.
+        guard isValidIQResponseFrom(from, expectedFrom: pending.expectedFrom) else { return }
+
+        pending.callback(iq)
     }
 
     private func handleMessage(_ msg: XMLStanza) {
@@ -740,12 +928,20 @@ class XMPPClient: XMLStreamParserDelegate {
             }
         }
 
+        // XEP-0045 §7.5 — MUC private messages carry an <x xmlns="…muc#user"/>
+        // marker.  Surface it on the incoming-message struct so the view model can
+        // distinguish PMs (which come from `room@service/nick`) from real DMs
+        // (which come from `user@server/resource`) without having to second-guess
+        // the JID shape.
+        let isMUCPM = msg.child(named: "x", xmlns: "http://jabber.org/protocol/muc#user") != nil
+
         let incoming = XMPPIncomingMessage(
             from: from,
             body: body.text,
             type: type,
             timestamp: timestamp,
-            isDelayed: isDelayed
+            isDelayed: isDelayed,
+            isMUCPrivateMessage: isMUCPM
         )
         delegate?.xmpp(self, didReceiveMessage: incoming)
     }
@@ -808,5 +1004,44 @@ class XMPPClient: XMLStreamParserDelegate {
             if let date = fmt.date(from: string) { return date }
         }
         return nil
+    }
+}
+
+// MARK: - SCRAM Hash Variant
+
+/// Tags a SCRAM exchange with the hash function being used.  SCRAM-SHA-1 (RFC 5802)
+/// and SCRAM-SHA-256 (RFC 7677) share the entire wire protocol; only the underlying
+/// hash, HMAC, and PBKDF2 PRF differ.  This enum exposes those choices uniformly so
+/// `authenticateSCRAM` and `handleSCRAMChallenge` are a single code path.
+enum SCRAMHashVariant {
+    case sha1
+    case sha256
+
+    var mechanismName: String {
+        switch self {
+        case .sha1:   return "SCRAM-SHA-1"
+        case .sha256: return "SCRAM-SHA-256"
+        }
+    }
+
+    var digestLength: Int {
+        switch self {
+        case .sha1:   return Int(CC_SHA1_DIGEST_LENGTH)   // 20
+        case .sha256: return Int(CC_SHA256_DIGEST_LENGTH) // 32
+        }
+    }
+
+    var ccHmacAlgorithm: CCHmacAlgorithm {
+        switch self {
+        case .sha1:   return CCHmacAlgorithm(kCCHmacAlgSHA1)
+        case .sha256: return CCHmacAlgorithm(kCCHmacAlgSHA256)
+        }
+    }
+
+    var ccPrfAlgorithm: CCPseudoRandomAlgorithm {
+        switch self {
+        case .sha1:   return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1)
+        case .sha256: return CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256)
+        }
     }
 }

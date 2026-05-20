@@ -35,6 +35,14 @@ class XMPPConnection: NSObject, StreamDelegate {
     private(set) var isConnected = false
     private(set) var isTLSActive = false
 
+    /// The JID we expect server-initiated XEP-0199 pings to come `from`.  Typically
+    /// the bare server domain (the part after `@` in the user's JID).  The fast
+    /// ping responder refuses to fire unless the inbound IQ's `from` attribute
+    /// matches this exactly — closes the silent-online-status oracle where any
+    /// peer could trigger a pong by including the ping namespace as a substring.
+    /// Set by XMPPClient at connect time; nil disables the fast path entirely.
+    var expectedPingSourceJID: String?
+
     // Security: Track activity for idle timeout
     private var lastActivityTime = Date()
     private var idleTimeoutTimer: Timer?
@@ -201,40 +209,86 @@ class XMPPConnection: NSObject, StreamDelegate {
         outputStream?.setProperty(sslSettings, forKey: .init(kCFStreamPropertySSLSettings as String))
     }
 
-    /// Fast ping response — called directly on the stream thread to avoid main queue latency.
-    /// Uses simple string parsing instead of full XML parsing (security: no regex DoS).
+    /// Fast ping response — called on the stream thread to avoid main-queue latency.
+    ///
+    /// The original implementation fired on any chunk containing the substring
+    /// `"urn:xmpp:ping"` and extracted attributes structure-blindly, which let
+    /// any peer trigger a silent online-status oracle by sending a message
+    /// stanza with a decorative `<x xmlns="urn:xmpp:ping"/>` child.  This
+    /// rewrite locks the fast path down to genuine XEP-0199 server pings:
+    ///
+    ///   • Chunk must be a single `<iq>…</iq>` envelope with nothing before or
+    ///     after it (multi-stanza chunks fall through to the slow path).
+    ///   • `from` attribute on the IQ opener must equal `expectedPingSourceJID`
+    ///     (set to the user's server domain at connect time).  XMPP servers
+    ///     stamp `from` on inbound stanzas with the authenticated origin, so
+    ///     this is not spoofable by other connected users.
+    ///   • `type` must be `"get"`.
+    ///   • The IQ's body must be exactly one `<ping xmlns="urn:xmpp:ping"/>`
+    ///     element — no siblings, no nesting, no other children.
+    ///
+    /// Anything that fails these checks is silently passed through to the slow
+    /// path (the dispatch to main below this site still happens) and never
+    /// produces a fast pong.  The user's online status is no longer leaked.
     private func handlePingFast(_ str: String) {
-        // Security: Limit string length to prevent DoS
+        // Bound the work — pings should be small.
         guard str.count < 4096 else { return }
 
-        // Extract id attribute using safe string parsing
-        guard let id = extractAttribute("id", from: str, maxLength: 256) else {
-            #if DEBUG
-            print("[XMPP] Fast ping: could not extract id")
-            #endif
-            return
-        }
+        // Without a configured source JID we can't safely gate; never fast-path.
+        guard let expectedJID = expectedPingSourceJID, !expectedJID.isEmpty else { return }
 
-        // Extract from attribute
-        let from = extractAttribute("from", from: str, maxLength: 512) ?? ""
+        // Trim outer whitespace (TCP segment boundaries are noisy).
+        let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Build pong response
-        let pong: String
-        if from.isEmpty {
-            pong = "<iq type='result' id='\(id.xmlEscaped)'/>"
-        } else {
-            pong = "<iq type='result' id='\(id.xmlEscaped)' to='\(from.xmlEscaped)'/>"
-        }
+        // Must be a single, paired <iq …>…</iq> envelope.  A self-closing
+        // `<iq …/>` couldn't carry a <ping/> body, so we don't accept it.
+        guard trimmed.hasPrefix("<iq"),
+              trimmed.hasSuffix("</iq>") else { return }
 
+        // The character right after "<iq" must be whitespace — otherwise
+        // we'd match other element names that happen to start with "iq".
+        let afterIQ = trimmed.index(trimmed.startIndex, offsetBy: 3)
+        guard afterIQ < trimmed.endIndex, trimmed[afterIQ].isWhitespace else { return }
+
+        // Locate the end of the IQ opener tag (the first `>`).  Attributes
+        // are parsed only from this opener, not from anywhere else in the
+        // chunk — this is what prevents nested-element attributes from
+        // leaking into our parse (the original bug).
+        guard let openTagEnd = trimmed.firstIndex(of: ">") else { return }
+        let openerTag = String(trimmed[..<trimmed.index(after: openTagEnd)])
+
+        // Attribute checks — type, from, id — all read from the opener only.
+        guard let typeAttr = extractAttribute("type", from: openerTag, maxLength: 32),
+              typeAttr == "get" else { return }
+        guard let fromAttr = extractAttribute("from", from: openerTag, maxLength: 512),
+              fromAttr == expectedJID else { return }
+        guard let id = extractAttribute("id", from: openerTag, maxLength: 256) else { return }
+
+        // Validate the IQ body is exactly a single ping element.  Body is the
+        // substring between the opener's `>` and the closing `</iq>`.
+        let bodyStart = trimmed.index(after: openTagEnd)
+        let bodyEnd = trimmed.index(trimmed.endIndex, offsetBy: -5) // strip "</iq>"
+        guard bodyStart <= bodyEnd else { return }
+        let body = trimmed[bodyStart..<bodyEnd].trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard body.hasPrefix("<ping"),
+              body.contains("urn:xmpp:ping"),
+              (body.hasSuffix("/>") || body.hasSuffix("</ping>")) else { return }
+        // No siblings or nested elements: one element open-tag (self-closing)
+        // or two (open + close).  Anything else means there's another element
+        // alongside the ping, which disqualifies the fast path.
+        let elementOpens = body.reduce(0) { $1 == "<" ? $0 + 1 : $0 }
+        guard elementOpens == 1 || elementOpens == 2 else { return }
+
+        // Build pong response.  We always include `to=fromAttr` because we've
+        // already confirmed the source is the legitimate server JID.
+        let pong = "<iq type='result' id='\(id.xmlEscaped)' to='\(fromAttr.xmlEscaped)'/>"
         guard let output = outputStream, let data = pong.data(using: .utf8) else { return }
         data.withUnsafeBytes { ptr in
             if let baseAddr = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) {
                 output.write(baseAddr, maxLength: data.count)
             }
         }
-        // #if DEBUG
-        // print("[XMPP] >>> \(pong) (fast pong)")
-        // #endif
     }
 
     /// Safely extract XML attribute value without regex (security: prevent regex DoS)

@@ -69,7 +69,7 @@ struct OccupantRow: View {
                 .frame(width: 12, alignment: .center)
                 .opacity(occupant.prefix.isEmpty ? 0.25 : 1.0)
 
-            Text(occupant.nick)
+            Text(occupant.displayNick)
                 .font(Theme.sidebarFont)
                 .foregroundStyle(Theme.userText)
                 .lineLimit(1)

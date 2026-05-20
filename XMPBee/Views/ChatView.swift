@@ -227,17 +227,45 @@ private let urlDetector: NSDataDetector? = {
     try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 }()
 
-/// Helper to add clickable links to text
+/// URL schemes we'll render as clickable affordances and dispatch via
+/// NSWorkspace.shared.open(_:).  Everything else stays as plain text — the user
+/// can still copy-paste it if they really want to follow it, but they don't get
+/// the implicit "this is safe to click" signal of an underlined link.
+///
+/// `http` / `https` are the common case.  `mailto` is universal and lands in the
+/// user's mail client (which has its own compose preview before sending).  `xmpp`
+/// (XEP-0147) is included because it's the natural complement to a chat client —
+/// click-to-DM is reasonable and the destination is just another XMPP client UI.
+///
+/// Notable exclusions and why:
+///   • `file://` — would dispatch to whatever app handles the file's type, which
+///     ranges from "open a PDF in Preview" (mostly benign) to "open .app/.scpt
+///     and prompt to run it" (not).
+///   • `x-apple-systempreferences:` — social-engineering primitive for "click
+///     here to fix your settings" panes.
+///   • Any third-party scheme registered on the user's machine (vlc://,
+///     spotify://, custom dev-tool schemes) — opaque attack surface; we can't
+///     reason about what each handler does with the URL.
+private let allowedLinkSchemes: Set<String> = ["http", "https", "mailto", "xmpp"]
+
+/// True if `url` is in the allowlist of schemes we'll render and dispatch.
+private func isAllowedClickableURL(_ url: URL) -> Bool {
+    guard let scheme = url.scheme?.lowercased() else { return false }
+    return allowedLinkSchemes.contains(scheme)
+}
+
+/// Helper to add clickable links to text.  Filters detected URLs through the
+/// scheme allowlist so non-allowlisted URLs render as plain text rather than
+/// underlined clickable affordances.
 private func addLinks(to attrString: NSMutableAttributedString, in range: NSRange) {
     guard let detector = urlDetector else { return }
 
     let matches = detector.matches(in: attrString.string, range: range)
     for match in matches {
-        if let url = match.url {
-            attrString.addAttribute(.link, value: url, range: match.range)
-            attrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range)
-            attrString.addAttribute(.foregroundColor, value: NSColor.linkColor, range: match.range)
-        }
+        guard let url = match.url, isAllowedClickableURL(url) else { continue }
+        attrString.addAttribute(.link, value: url, range: match.range)
+        attrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range)
+        attrString.addAttribute(.foregroundColor, value: NSColor.linkColor, range: match.range)
     }
 }
 
@@ -604,15 +632,24 @@ struct ChatTranscriptView: NSViewRepresentable {
         // MARK: NSTextViewDelegate
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            if let url = link as? URL {
-                NSWorkspace.shared.open(url)
-                return true
+            // Resolve the click target to a URL.
+            let url: URL?
+            if let u = link as? URL {
+                url = u
+            } else if let s = link as? String {
+                url = URL(string: s)
+            } else {
+                url = nil
             }
-            if let s = link as? String, let url = URL(string: s) {
-                NSWorkspace.shared.open(url)
-                return true
-            }
-            return false
+            // Defense-in-depth: even if a non-allowlisted URL somehow landed in the
+            // attributed string with a .link attribute (the addLinks() helper now
+            // filters them, but pasted attributed text from elsewhere could carry
+            // one), refuse to dispatch.  Returning true here tells NSTextView we
+            // "handled" the click, which suppresses its own NSWorkspace.open call
+            // that would otherwise fire as a fallback.
+            guard let url, isAllowedClickableURL(url) else { return true }
+            NSWorkspace.shared.open(url)
+            return true
         }
     }
 }

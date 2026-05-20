@@ -15,6 +15,15 @@ class Room: Identifiable, ObservableObject, Hashable {
     /// Whether this is a DM (direct message) conversation rather than a MUC room
     var isDM = false
 
+    /// Whether this is a MUC private message (XEP-0045 §7.5) — a 1:1 thread
+    /// scoped to a participant inside a MUC room, addressed by `room@service/nick`.
+    /// `isMUCPM` Rooms also have `isDM == true` (they share the DM UI shape),
+    /// but they route replies to the full occupant JID rather than constructing
+    /// a bare JID from the participant nick, and they are NOT persisted into
+    /// the saved dmContacts list (room-scoped identity expires when the room
+    /// is left).
+    var isMUCPM = false
+
     /// Whether initial presence flood (user list sync) is complete.
     /// Until true, join messages are suppressed and occupant updates are batched.
     var initialPresenceComplete = false

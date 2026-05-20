@@ -110,7 +110,21 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
     private var recoveryAttempts = 0
     private let maxRecoveryAttempts = 3
 
+    /// Set the moment `<proceed/>` is recognized on the parser thread.  While set,
+    /// `feed(_:)` drops incoming bytes and the dispatch site drops any further
+    /// complete stanzas — closing the STARTTLS injection window where a MITM
+    /// who packs `<proceed/>` plus attacker-controlled XMPP bytes into the same
+    /// TCP segment could otherwise have those bytes parsed and delivered as
+    /// legitimate pre-TLS stanzas while the TLS handshake is in flight.
+    /// Cleared in `reset()` (called by XMPPClient.openStream() after `onTLSReady`).
+    private var isTLSTransitioning = false
+
     func feed(_ data: Data) {
+        // STARTTLS gate: once `<proceed/>` has been seen, no more bytes go to the
+        // parser until the post-TLS reset.  TLS handshake bytes are consumed by
+        // the SSL stack directly from the socket, not by us.
+        if isTLSTransitioning { return }
+
         guard let str = String(data: data, encoding: .utf8) else { return }
 
         // Strip XML declarations — they appear at the start of each XMPP stream
@@ -145,6 +159,8 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
         isStreamOpen = false
         isRecoveringStream = false
         recoveryAttempts = 0
+        // Reset the STARTTLS gate — the new (post-TLS) parser instance starts clean.
+        isTLSTransitioning = false
     }
 
     // MARK: - Parser Lifecycle
@@ -353,6 +369,24 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
             // parser (replaced during in-place recovery) are silently discarded.
             currentStanza = nil
             elementStack = []
+
+            // STARTTLS gate: any stanza appearing AFTER we've seen <proceed/> but
+            // before the post-TLS reset is treated as MITM-injected garbage and
+            // silently dropped.  Combined with feed() dropping new input, this
+            // closes the pre-TLS-handshake injection window.
+            if isTLSTransitioning {
+                depth -= 1
+                return
+            }
+
+            // If THIS stanza is the STARTTLS <proceed/>, set the gate before the
+            // dispatch so any stanzas already in the parser pipe behind it are
+            // suppressed (they cannot have come over the TLS-protected channel —
+            // TLS hasn't been negotiated yet).
+            if stanza.name == "proceed" && stanza.xmlns == "urn:ietf:params:xml:ns:xmpp-tls" {
+                isTLSTransitioning = true
+            }
+
             let gen = parserGeneration
 
             DispatchQueue.main.async { [weak self] in
