@@ -16,7 +16,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "B5000000000000000000DD01"
                BuildableName = "XMPBee iOS.app"
-               BlueprintName = "XMPBee iOS"
+               BlueprintName = "XMPBee Mobile"
                ReferencedContainer = "container:XMPBee.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -46,7 +46,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "B5000000000000000000DD01"
             BuildableName = "XMPBee iOS.app"
-            BlueprintName = "XMPBee iOS"
+            BlueprintName = "XMPBee Mobile"
             ReferencedContainer = "container:XMPBee.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -63,7 +63,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "B5000000000000000000DD01"
             BuildableName = "XMPBee iOS.app"
-            BlueprintName = "XMPBee iOS"
+            BlueprintName = "XMPBee Mobile"
             ReferencedContainer = "container:XMPBee.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
