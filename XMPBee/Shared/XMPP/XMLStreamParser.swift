@@ -225,6 +225,15 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
     }
 
     private func stopParser() {
+        // NSXMLParser holds its delegate via an UNSAFE (assign) reference that it
+        // never zeroes. The background parse() thread retains the XMLParser (but only
+        // weakly references this XMLStreamParser), so if `self` is freed while parse()
+        // is still unwinding — e.g. the account is deleted, releasing this object and
+        // its pipe streams, which unblocks parse() with EOF — NSXMLParser reports the
+        // resulting error to a dangling delegate and crashes (objc_opt_respondsToSelector
+        // PAC trap on XMPPXMLParserThread). Clear the delegate FIRST, while `self` is
+        // still alive, so the orphaned parser can't call back into a freed object.
+        xmlParser?.delegate = nil
         pipeInput?.close()
         pipeOutput?.close()
         pipeInput = nil
@@ -232,6 +241,15 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
         parserThread?.cancel()
         parserThread = nil
         xmlParser = nil
+    }
+
+    deinit {
+        // Backstop: a disconnected-but-not-reset parser leaves its thread blocked in
+        // parse(). Deleting the account frees this object; releasing the pipe streams
+        // unblocks parse() into its error path. stopParser() nils the parser delegate
+        // before the streams are torn down, so that error path sees a nil delegate
+        // instead of this freed object.
+        stopParser()
     }
 
     /// Attempt to recover from a mid-stream parse error without dropping the

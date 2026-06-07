@@ -141,6 +141,23 @@ class XMPPClient: XMLStreamParserDelegate {
     func connect(host: String, port: Int, jid: String, password: String,
                  resource: String = Platform.defaultResource, priority: Int = 0,
                  securityMode: SecurityMode = .requireTLS) {
+        // Tear down any previous connection BEFORE opening a new one. Without this,
+        // re-assigning `connection` orphans the old XMPPConnection — but its stream
+        // thread's runloop keeps the object (and its open TCP socket) alive, so the
+        // server still sees the prior session. The new connection then binds the same
+        // full JID, the server displaces one session with <stream:error>conflict, and
+        // that disconnect schedules yet another reconnect — an endless conflict storm.
+        // Detach the stale connection's callbacks first so its teardown can't fire
+        // onDisconnected → scheduleReconnection.
+        if let stale = connection {
+            stale.onConnected = nil
+            stale.onData = nil
+            stale.onDisconnected = nil
+            stale.onTLSReady = nil
+            stale.disconnect()
+            connection = nil
+        }
+
         self.jid = jid
         self.password = password
         self.resource = resource
