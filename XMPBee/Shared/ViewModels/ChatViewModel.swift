@@ -44,12 +44,40 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     private let maxReconnectionAttempts = 5
     private var manuallyDisconnected: Set<UUID> = []
 
+    /// iOS app-lifecycle reconnect intent.  When the app is backgrounded we close
+    /// sockets cleanly but record (per-server) that we WANT to be connected again
+    /// once foregrounded.  This is deliberately distinct from `manuallyDisconnected`
+    /// — backgrounding must NOT permanently mark a server as user-disconnected, or
+    /// it would never auto-reconnect.  Only iOS App.swift drives this (via
+    /// `handleScenePhase`); macOS leaves it empty.
+    private var wantsConnected: Set<UUID> = []
+    /// Servers whose sockets we closed because the app is backgrounded.  Used in the
+    /// `xmppDidDisconnect` delegate to suppress `scheduleReconnection` (a timer can't
+    /// fire while the process is suspended), without marking them user-disconnected.
+    private var backgroundedDisconnects: Set<UUID> = []
+    /// Whether the app is currently foreground (iOS).  Gates the background-disconnect
+    /// delegate so it auto-reconnects only once we're actually `.active`, never during
+    /// the brief window between `.background` and process suspension.  macOS never sets
+    /// this (and never enters the backgrounded-disconnect branch), so it's a no-op there.
+    private var isForeground = true
+
+    /// UI-only projection of reconnect state for the iOS banner.  This is NOT a
+    /// second backoff counter — `reconnectionAttempts` remains the single source of
+    /// truth for backoff.  This dict is updated in lockstep with the existing
+    /// reconnect transition points so the two can't drift.
+    enum ReconnectUIState {
+        case attempting
+        case failed
+    }
+    @Published var reconnectStatus: [UUID: ReconnectUIState] = [:]
+
     // MARK: - Server Management
 
     func addServerAndConnect(
         name: String, hostname: String, port: Int,
         jid: String, password: String,
-        resource: String = "XMPBee",
+        resource: String = Platform.defaultResource,
+        priority: Int = 0,
         securityMode: SecurityMode = .requireTLS,
         nickname: String, conferenceServer: String, rooms: [String]
     ) {
@@ -67,11 +95,11 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
         // Password is passed directly to client and will be cleared after auth
         client.connect(host: hostname, port: port, jid: jid, password: password,
-                       resource: resource, securityMode: securityMode)
+                       resource: resource, priority: priority, securityMode: securityMode)
 
         // Save settings for next launch (password goes to Keychain, not Server object)
         saveSettings(name: name, hostname: hostname, port: port, jid: jid, password: password,
-                     resource: resource, securityMode: securityMode, nickname: nickname,
+                     resource: resource, priority: priority, securityMode: securityMode, nickname: nickname,
                      conferenceServer: conferenceServer, rooms: rooms)
 
         // Reset reconnection attempts for new connections
@@ -84,15 +112,19 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         let attempts = reconnectionAttempts[server.id] ?? 0
 
         guard attempts < maxReconnectionAttempts else {
-            addSystemMessage(to: server, text: "Max reconnection attempts reached. Click ⚡ to reconnect.")
+            logConnectionEvent(to: server, "Max reconnection attempts reached. Click ⚡ to reconnect.")
+            // UI projection: backoff exhausted — show the failed/Retry banner.
+            reconnectStatus[server.id] = .failed
             return
         }
 
         // Exponential backoff: 2^attempts seconds (2, 4, 8, 16, 32 seconds)
         let delay = min(pow(2.0, Double(attempts)), 32.0)
         reconnectionAttempts[server.id] = attempts + 1
+        // UI projection: a reconnect is now in flight.
+        reconnectStatus[server.id] = .attempting
 
-        addSystemMessage(to: server, text: "Reconnecting in \(Int(delay))s... (attempt \(attempts + 1)/\(maxReconnectionAttempts))")
+        logConnectionEvent(to: server, "Reconnecting in \(Int(delay))s... (attempt \(attempts + 1)/\(maxReconnectionAttempts))")
 
         let serverID = server.id
         reconnectionTimers[server.id]?.invalidate()
@@ -113,18 +145,26 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
               let jid = dict["jid"] as? String,
               let pw = Self.loadPasswordFromKeychain(for: jid),
               let _ = pendingConfig[server.id] else {
-            addSystemMessage(to: server, text: "Reconnection failed: missing credentials")
+            logConnectionEvent(to: server, "Reconnection failed: missing credentials")
+            // UI projection: no in-flight attempt — surface the failed/Retry banner
+            // instead of leaving a stale spinner.
+            reconnectStatus[server.id] = .failed
             return
         }
 
         var password = pw
         defer { password = "" }
 
-        addSystemMessage(to: server, text: "Reconnecting to \(server.hostname):\(server.port)...")
+        // UI projection: a reconnect attempt is in flight (cleared on success in
+        // xmppDidAuthenticateMain, or flipped to .failed by scheduleReconnection).
+        reconnectStatus[server.id] = .attempting
+
+        logConnectionEvent(to: server, "Reconnecting to \(server.hostname):\(server.port)...")
 
         let hostname = dict["hostname"] as? String ?? server.hostname
         let port = dict["port"] as? Int ?? server.port
-        let resource = dict["resource"] as? String ?? "XMPBee"
+        let resource = dict["resource"] as? String ?? Platform.defaultResource
+        let priority = dict["priority"] as? Int ?? 0
         let modeRaw = dict["securityMode"] as? String ?? "requireTLS"
         let securityMode = SecurityMode(rawValue: modeRaw) ?? .requireTLS
 
@@ -136,7 +176,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         }
 
         client.connect(host: hostname, port: port, jid: jid, password: password,
-                       resource: resource, securityMode: securityMode)
+                       resource: resource, priority: priority, securityMode: securityMode)
     }
 
     func manualReconnect(server: Server) {
@@ -147,16 +187,23 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         reconnectionAttempts[server.id] = 0
         reconnectionTimers[server.id]?.invalidate()
         reconnectionTimers[server.id] = nil
+        // UI projection: clear any .failed state; reconnect(server:) sets .attempting.
+        reconnectStatus[server.id] = .attempting
         reconnect(server: server)
     }
 
     func disconnect(server: Server) {
         // Mark as manually disconnected
         manuallyDisconnected.insert(server.id)
+        // User-initiated disconnect overrides any background reconnect intent.
+        wantsConnected.remove(server.id)
+        backgroundedDisconnects.remove(server.id)
 
         // Cancel any pending reconnection attempts
         reconnectionTimers[server.id]?.invalidate()
         reconnectionTimers[server.id] = nil
+        // UI projection: user disconnected — no banner for this server.
+        reconnectStatus.removeValue(forKey: server.id)
 
         // Update UI immediately
         server.isConnected = false
@@ -166,6 +213,66 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // Disconnect the client (will trigger xmppDidDisconnect delegate)
         if let client = clients[server.id] {
             client.disconnect()
+        }
+    }
+
+    // MARK: - App Lifecycle (iOS)
+
+    /// React to iOS scene-phase changes.  Called ONLY from the iOS App.swift via
+    /// `.onChange(of: scenePhase)`; macOS never invokes this (the method still
+    /// compiles there because the file is shared and SwiftUI's `ScenePhase` is
+    /// cross-platform).
+    ///
+    /// - `.background`: the process is about to be suspended.  Remember which
+    ///   servers we want to keep connected, cancel pending reconnect timers (they
+    ///   can't fire while suspended), and close sockets cleanly — WITHOUT marking
+    ///   the server user-disconnected, so we auto-reconnect on return.
+    /// - `.active`: reconnect once for each server we wanted connected that isn't.
+    /// - `.inactive`: transient state (e.g. app switcher) — no-op.
+    func handleScenePhase(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            isForeground = false
+            for server in servers where server.isConnected {
+                // Record intent to reconnect on return.
+                wantsConnected.insert(server.id)
+                // A pending backoff timer can't fire while suspended; cancel it so
+                // there's a single reconnect path (the .active handler below).  Keep
+                // `reconnectionAttempts` as-is (single backoff source of truth).
+                reconnectionTimers[server.id]?.invalidate()
+                reconnectionTimers[server.id] = nil
+                // Close the socket cleanly via the existing client path.  Mark it as
+                // a backgrounded disconnect so the xmppDidDisconnect delegate skips
+                // scheduleReconnection — distinct from `manuallyDisconnected`.
+                backgroundedDisconnects.insert(server.id)
+                clients[server.id]?.disconnect()
+            }
+
+        case .active:
+            isForeground = true
+            for server in servers where wantsConnected.contains(server.id) && !server.isConnected {
+                wantsConnected.remove(server.id)
+                // Belt-and-suspenders: cancel any stray pending timer so we don't
+                // double-connect (one explicit reconnect below is the single path).
+                reconnectionTimers[server.id]?.invalidate()
+                reconnectionTimers[server.id] = nil
+                // Fresh foreground attempt — reset the backoff counter (single source
+                // of truth) and reconnect once.  reconnect(server:) sets the UI
+                // projection to .attempting.
+                reconnectionAttempts[server.id] = 0
+                reconnect(server: server)
+            }
+            // Keep reconnect intent ONLY for servers whose background-disconnect
+            // delegate hasn't fired yet (they still read as connected here); the
+            // gated branch in xmppDidDisconnect reconnects those once the socket
+            // finishes closing.  Genuinely still-connected servers drop their intent.
+            wantsConnected = wantsConnected.filter { backgroundedDisconnects.contains($0) }
+
+        case .inactive:
+            break
+
+        @unknown default:
+            break
         }
     }
 
@@ -216,7 +323,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     }
 
     private func saveSettings(name: String, hostname: String, port: Int,
-                              jid: String, password: String, resource: String,
+                              jid: String, password: String, resource: String, priority: Int,
                               securityMode: SecurityMode, nickname: String,
                               conferenceServer: String, rooms: [String]) {
         var accounts = Self.savedAccountsArray()
@@ -232,6 +339,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         entry["port"] = port
         entry["jid"] = jid
         entry["resource"] = resource
+        entry["priority"] = priority
         entry["securityMode"] = securityMode.rawValue
         entry["nickname"] = nickname
         entry["conferenceServer"] = conferenceServer
@@ -281,7 +389,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             let name = dict["name"] as? String ?? ""
             let hostname = dict["hostname"] as? String ?? ""
             let port = dict["port"] as? Int ?? 5222
-            let resource = dict["resource"] as? String ?? "XMPBee"
+            let resource = dict["resource"] as? String ?? Platform.defaultResource
+            let priority = dict["priority"] as? Int ?? 0
             let modeRaw = dict["securityMode"] as? String ?? "requireTLS"
             let securityMode = SecurityMode(rawValue: modeRaw) ?? .requireTLS
             let nickname = dict["nickname"] as? String ?? ""
@@ -290,7 +399,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
             addServerAndConnect(
                 name: name, hostname: hostname, port: port,
-                jid: jid, password: password, resource: resource,
+                jid: jid, password: password, resource: resource, priority: priority,
                 securityMode: securityMode, nickname: nickname,
                 conferenceServer: conferenceServer, rooms: rooms
             )
@@ -415,7 +524,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         server: Server,
         name: String, hostname: String, port: Int,
         jid: String, password: String,
-        resource: String = "XMPBee",
+        resource: String = Platform.defaultResource,
+        priority: Int = 0,
         securityMode: SecurityMode = .requireTLS,
         nickname: String, conferenceServer: String, rooms: [String]
     ) {
@@ -423,6 +533,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         reconnectionTimers[server.id]?.invalidate()
         reconnectionTimers[server.id] = nil
         reconnectionAttempts[server.id] = 0
+        reconnectStatus.removeValue(forKey: server.id)
         manuallyDisconnected.remove(server.id)
 
         // Tear down the existing connection if any.
@@ -454,7 +565,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // Persist to UserDefaults + Keychain.
         saveSettings(
             name: name, hostname: hostname, port: port, jid: jid, password: password,
-            resource: resource, securityMode: securityMode, nickname: nickname,
+            resource: resource, priority: priority, securityMode: securityMode, nickname: nickname,
             conferenceServer: conferenceServer, rooms: rooms
         )
 
@@ -471,7 +582,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         addSystemMessage(to: server, text: "Reconnecting with updated settings...")
         client.connect(
             host: hostname, port: port, jid: jid, password: password,
-            resource: resource, securityMode: securityMode
+            resource: resource, priority: priority, securityMode: securityMode
         )
     }
 
@@ -483,6 +594,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         reconnectionTimers[server.id]?.invalidate()
         reconnectionTimers[server.id] = nil
         reconnectionAttempts[server.id] = 0
+        reconnectStatus.removeValue(forKey: server.id)
         if let client = clients[server.id] {
             client.disconnect()
         }
@@ -854,6 +966,14 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         room.messages.append(msg)
     }
 
+    /// Automatic reconnect/backoff events are intentionally NOT written into the chat
+    /// transcript on any platform — connection state is surfaced out-of-band via
+    /// `reconnectStatus` (the sidebar connection dot / ⚡ reconnect button on macOS, the
+    /// reconnect banner on iOS). Kept as the single policy hook for these events.
+    private func logConnectionEvent(to server: Server, _ text: String) {
+        // no-op — see doc comment
+    }
+
     private func joinSingleRoom(server: Server, client: XMPPClient, roomJID: String, roomName: String, nickname: String) {
         // Check if MUC already exists (e.g., from a previous connection).  Filter
         // !isDM so a DM tab whose constructed JID coincidentally matches the MUC
@@ -915,6 +1035,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         reconnectionAttempts[server.id] = 0
         reconnectionTimers[server.id]?.invalidate()
         reconnectionTimers[server.id] = nil
+        // UI projection: connected — clear any reconnect banner state.
+        reconnectStatus.removeValue(forKey: server.id)
 
         // Join configured rooms
         if let config = pendingConfig[server.id] {
@@ -980,7 +1102,24 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             // observes the state flip and disables.
             objectWillChange.send()
             let reason = error?.localizedDescription ?? "Connection closed"
-            addSystemMessage(to: server, text: "Disconnected: \(reason)")
+            logConnectionEvent(to: server, "Disconnected: \(reason)")
+
+            // If this disconnect was caused by backgrounding the app, don't schedule
+            // a reconnection timer — it can't fire while the process is suspended,
+            // and we'll reconnect once on .active.  Consume the marker; the server
+            // stays in `wantsConnected` so the foreground path knows to reconnect.
+            if backgroundedDisconnects.remove(server.id) != nil {
+                // The socket finished closing.  If we're already foreground and still
+                // want this server connected, reconnect now — the `.active` handler
+                // may have run before this delegate (the server still read as connected
+                // then) and skipped it.  If still backgrounded, leave the intent for
+                // `.active` to act on, so we never connect during suspension.
+                if isForeground, wantsConnected.remove(server.id) != nil {
+                    reconnectionAttempts[server.id] = 0
+                    reconnect(server: server)
+                }
+                return
+            }
 
             // Only attempt automatic reconnection if not manually disconnected
             if !manuallyDisconnected.contains(server.id) {

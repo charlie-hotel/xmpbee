@@ -26,6 +26,10 @@ class XMPPConnection: NSObject, StreamDelegate {
     private var streamThread: Thread?
     private var readBuffer = Data()
     private var writeBuffer = Data()
+    // Guards against flushWriteBuffer() re-entering itself: output.write() can
+    // synchronously deliver .hasSpaceAvailable on the same runloop, which would
+    // shrink writeBuffer mid-flush and make the outer removeFirst overrun.
+    private var isFlushing = false
 
     var onData: ((Data) -> Void)?
     var onConnected: (() -> Void)?
@@ -115,6 +119,10 @@ class XMPPConnection: NSObject, StreamDelegate {
     /// Handles partial writes by keeping unwritten bytes for the next hasSpaceAvailable event.
     private func flushWriteBuffer() {
         guard let output = outputStream, !writeBuffer.isEmpty else { return }
+        guard !isFlushing else { return }  // dropped bytes flush on the next hasSpaceAvailable/send
+        isFlushing = true
+        defer { isFlushing = false }
+
         let written: Int = writeBuffer.withUnsafeBytes { ptr in
             guard let baseAddr = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
             return output.write(baseAddr, maxLength: writeBuffer.count)
@@ -127,7 +135,7 @@ class XMPPConnection: NSObject, StreamDelegate {
             }
             closeStreams()
         } else if written > 0 {
-            writeBuffer.removeFirst(written)
+            writeBuffer.removeFirst(min(written, writeBuffer.count))
         }
         // written == 0: stream not ready — keep buffer, flush on next hasSpaceAvailable
     }
@@ -332,9 +340,7 @@ class XMPPConnection: NSObject, StreamDelegate {
     private func checkIdleTimeout() {
         let idle = Date().timeIntervalSince(lastActivityTime)
         if idle > idleTimeoutSeconds {
-            #if DEBUG
-            print("[XMPP] Idle timeout: \(Int(idle))s")
-            #endif
+            logDisconnectReason("CLIENT", "idle timeout — no inbound data for \(Int(idle))s, closing")
             disconnect()
         }
     }
@@ -398,6 +404,7 @@ class XMPPConnection: NSObject, StreamDelegate {
                 } else if bytesRead < 0 {
                     // Read error — treat as disconnect
                     let error = aStream.streamError
+                    logDisconnectReason("NETWORK", "read error: \(error?.localizedDescription ?? "unknown")")
                     DispatchQueue.main.async {
                         self.onDisconnected?(error)
                     }
@@ -408,12 +415,14 @@ class XMPPConnection: NSObject, StreamDelegate {
 
         case .errorOccurred:
             let error = aStream.streamError
+            logDisconnectReason("NETWORK", "stream errorOccurred: \(error?.localizedDescription ?? "unknown")")
             DispatchQueue.main.async {
                 self.onDisconnected?(error)
             }
             closeStreams()
 
         case .endEncountered:
+            logDisconnectReason("REMOTE", "server closed the connection (stream EOF)")
             DispatchQueue.main.async {
                 self.onDisconnected?(nil)
             }

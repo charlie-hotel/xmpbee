@@ -1,6 +1,10 @@
 import Foundation
 import UserNotifications
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 
 /// Manages macOS notifications with sound for incoming XMPP messages
 @MainActor
@@ -31,8 +35,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         customSoundURL?.lastPathComponent ?? "None"
     }
 
-    /// All available macOS system sounds
+    /// All available macOS system sounds (empty on non-macOS — picker is macOS-only)
     static let availableSystemSounds: [String] = {
+        #if os(macOS)
         let systemSoundDir = "/System/Library/Sounds"
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: systemSoundDir) else { return [] }
@@ -40,6 +45,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             .filter { $0.hasSuffix(".aiff") }
             .map { ($0 as NSString).deletingPathExtension }
             .sorted()
+        #else
+        return []
+        #endif
     }()
 
     enum SoundSource: String, CaseIterable, Identifiable {
@@ -118,6 +126,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
     /// so it's available for UNNotificationSound. Returns true on success.
     @discardableResult
     func importCustomSound(from sourceURL: URL) -> Bool {
+        #if !os(macOS)
+        return false
+        #else
         guard let soundsDir = appSoundsDirectory else { return false }
 
         // Security-scoped resource access (required for sandboxed file picker)
@@ -142,12 +153,14 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             print("[Notifications] Failed to import sound: \(error)")
             return false
         }
+        #endif
     }
 
     // MARK: - Sound Resolution
 
     /// The resolved sound name for UNNotificationSound
     private var resolvedNotificationSound: UNNotificationSound {
+        #if os(macOS)
         switch soundSource {
         case .system:
             return UNNotificationSound(named: UNNotificationSoundName(rawValue: systemSoundName + ".aiff"))
@@ -157,6 +170,9 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
             }
             return .default
         }
+        #else
+        return .default
+        #endif
     }
 
     // MARK: - Setup
@@ -199,6 +215,7 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
     }
 
     private func observeAppState() {
+        #if os(macOS)
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main
@@ -208,15 +225,38 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
                 NSApplication.shared.dockTile.badgeLabel = nil
             }
         }
-
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
+            Task { @MainActor in self?.appIsActive = false }
+        }
+        #else
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
             Task { @MainActor in
-                self?.appIsActive = false
+                self?.appIsActive = true
+                self?.clearBadge()
             }
         }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.appIsActive = false }
+        }
+        #endif
+    }
+
+    private func clearBadge() {
+        #if os(macOS)
+        NSApplication.shared.dockTile.badgeLabel = nil
+        #else
+        UNUserNotificationCenter.iosBadgeCount = 0
+        UNUserNotificationCenter.current().setBadgeCount(0, withCompletionHandler: nil)
+        #endif
     }
 
     // MARK: - Send Notifications
@@ -273,10 +313,15 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         }
 
         if badge {
+            #if os(macOS)
             DispatchQueue.main.async {
                 let current = Int(NSApplication.shared.dockTile.badgeLabel ?? "0") ?? 0
                 NSApplication.shared.dockTile.badgeLabel = "\(current + 1)"
             }
+            #else
+            UNUserNotificationCenter.iosBadgeCount += 1
+            content.badge = NSNumber(value: UNUserNotificationCenter.iosBadgeCount)
+            #endif
         }
 
         let request = UNNotificationRequest(
@@ -306,24 +351,21 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
     }
 
     private func playSingleSound() {
+        #if os(macOS)
         switch soundSource {
         case .system:
-            if let sound = NSSound(named: systemSoundName) {
+            if let sound = NSSound(named: systemSoundName) { sound.play() }
+            else { NSSound.beep() }
+        case .custom:
+            if let url = customSoundURL, let sound = NSSound(contentsOf: url, byReference: true) {
                 sound.play()
             } else {
                 NSSound.beep()
             }
-        case .custom:
-            if let url = customSoundURL {
-                if let sound = NSSound(contentsOf: url, byReference: true) {
-                    sound.play()
-                } else {
-                    NSSound.beep()
-                }
-            } else {
-                NSSound.beep()
-            }
         }
+        #endif
+        // iOS: in-app alert sound is a no-op; audible alerts come from the
+        // UNNotification sound (always .default on iOS). Custom sounds are dropped.
     }
 
     /// Preview whatever sound is currently selected (for the preferences UI)
@@ -383,6 +425,14 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         return sanitized
     }
 }
+
+#if os(iOS)
+extension UNUserNotificationCenter {
+    /// Process-local running badge count for iOS (reset to 0 on foreground).
+    /// @MainActor: only ever touched from NotificationManager's @MainActor methods.
+    @MainActor static var iosBadgeCount: Int = 0
+}
+#endif
 
 extension Notification.Name {
     static let xmppNotificationReply = Notification.Name("xmppNotificationReply")

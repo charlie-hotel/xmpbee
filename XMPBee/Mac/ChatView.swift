@@ -220,53 +220,12 @@ struct ChatView: View {
     }
 }
 
-// MARK: - Link detection helpers
+// MARK: - Link / scheme allowlist (macOS bridge to shared builder)
 
-/// Shared URL detector for link detection
-private let urlDetector: NSDataDetector? = {
-    try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-}()
-
-/// URL schemes we'll render as clickable affordances and dispatch via
-/// NSWorkspace.shared.open(_:).  Everything else stays as plain text — the user
-/// can still copy-paste it if they really want to follow it, but they don't get
-/// the implicit "this is safe to click" signal of an underlined link.
-///
-/// `http` / `https` are the common case.  `mailto` is universal and lands in the
-/// user's mail client (which has its own compose preview before sending).  `xmpp`
-/// (XEP-0147) is included because it's the natural complement to a chat client —
-/// click-to-DM is reasonable and the destination is just another XMPP client UI.
-///
-/// Notable exclusions and why:
-///   • `file://` — would dispatch to whatever app handles the file's type, which
-///     ranges from "open a PDF in Preview" (mostly benign) to "open .app/.scpt
-///     and prompt to run it" (not).
-///   • `x-apple-systempreferences:` — social-engineering primitive for "click
-///     here to fix your settings" panes.
-///   • Any third-party scheme registered on the user's machine (vlc://,
-///     spotify://, custom dev-tool schemes) — opaque attack surface; we can't
-///     reason about what each handler does with the URL.
-private let allowedLinkSchemes: Set<String> = ["http", "https", "mailto", "xmpp"]
-
-/// True if `url` is in the allowlist of schemes we'll render and dispatch.
+/// True if `url` is in the shared allowlist of schemes we'll render and dispatch.
+/// Defined as a thin wrapper so the click-handler below keeps reading the same.
 private func isAllowedClickableURL(_ url: URL) -> Bool {
-    guard let scheme = url.scheme?.lowercased() else { return false }
-    return allowedLinkSchemes.contains(scheme)
-}
-
-/// Helper to add clickable links to text.  Filters detected URLs through the
-/// scheme allowlist so non-allowlisted URLs render as plain text rather than
-/// underlined clickable affordances.
-private func addLinks(to attrString: NSMutableAttributedString, in range: NSRange) {
-    guard let detector = urlDetector else { return }
-
-    let matches = detector.matches(in: attrString.string, range: range)
-    for match in matches {
-        guard let url = match.url, isAllowedClickableURL(url) else { continue }
-        attrString.addAttribute(.link, value: url, range: match.range)
-        attrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range)
-        attrString.addAttribute(.foregroundColor, value: NSColor.linkColor, range: match.range)
-    }
+    MessageAttributedStringBuilder.isAllowedClickableURL(url)
 }
 
 /// Paragraph style applied to every message — controls inter-message spacing and
@@ -280,97 +239,75 @@ private let messageParagraphStyle: NSParagraphStyle = {
     return p
 }()
 
-/// Helper to build NSAttributedString for a complete message row
-private func buildMessageAttributedString(_ message: ChatMessage) -> NSAttributedString {
-    let result = NSMutableAttributedString()
+// MARK: - macOS resolution of shared style intent
 
-    // Font attributes
-    let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    let monoBoldFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)
-    let monoSmallFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-
-    // Timestamp
-    let timestamp = NSAttributedString(
-        string: message.timeString + " ",
-        attributes: [
-            .font: monoFont,
-            .foregroundColor: NSColor.secondaryLabelColor
-        ]
-    )
-    result.append(timestamp)
-
-    // Message content based on type
-    switch message.type {
-    case .chat:
-        let bracket1 = NSAttributedString(string: "<", attributes: [.font: monoFont, .foregroundColor: NSColor.tertiaryLabelColor])
-        result.append(bracket1)
-
-        let nickColor = NSColor(name: nil) { appearance in
-            let idx = ChatMessage.nickIndex(message.sender)
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            let swiftColor = isDark ? ChatMessage.darkNickColors[idx] : ChatMessage.lightNickColors[idx]
-            return NSColor(swiftColor)
-        }
-        let sender = NSAttributedString(string: message.sender, attributes: [.font: monoBoldFont, .foregroundColor: nickColor])
-        result.append(sender)
-
-        let bracket2 = NSAttributedString(string: "> ", attributes: [.font: monoFont, .foregroundColor: NSColor.tertiaryLabelColor])
-        result.append(bracket2)
-
-        let bodyStart = result.length
-        let body = NSAttributedString(string: message.body, attributes: [.font: monoFont, .foregroundColor: NSColor.labelColor])
-        result.append(body)
-        // Use result.length delta — NSRange needs UTF-16 code unit count, not Swift.count
-        addLinks(to: result, in: NSRange(location: bodyStart, length: result.length - bodyStart))
-
-    case .action:
-        let text = "* \(message.sender) \(message.body)"
-        let actionStart = result.length
-        let actionNickColor = NSColor(name: nil) { appearance in
-            let idx = ChatMessage.nickIndex(message.sender)
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            let swiftColor = isDark ? ChatMessage.darkNickColors[idx] : ChatMessage.lightNickColors[idx]
-            return NSColor(swiftColor)
-        }
-        let action = NSAttributedString(string: text, attributes: [.font: monoFont, .foregroundColor: actionNickColor])
-        result.append(action)
-        // Use result.length delta — NSRange needs UTF-16 code unit count, not Swift.count
-        addLinks(to: result, in: NSRange(location: actionStart, length: result.length - actionStart))
-
-    case .join:
-        let text = "→ \(message.sender) has joined"
-        let join = NSAttributedString(string: text, attributes: [.font: monoSmallFont, .foregroundColor: NSColor.secondaryLabelColor])
-        result.append(join)
-
-    case .part:
-        var text = "← \(message.sender) has left"
-        if !message.body.isEmpty {
-            text += " (\(message.body))"
-        }
-        let part = NSAttributedString(string: text, attributes: [.font: monoSmallFont, .foregroundColor: NSColor.secondaryLabelColor])
-        result.append(part)
-
-    case .quit:
-        var text = "⇐ \(message.sender) has quit"
-        if !message.body.isEmpty {
-            text += " (\(message.body))"
-        }
-        let quit = NSAttributedString(string: text, attributes: [.font: monoSmallFont, .foregroundColor: NSColor.secondaryLabelColor])
-        result.append(quit)
-
-    case .topic:
-        let text = "✦ \(message.sender) changed the topic to: \(message.body)"
-        let topicStart = result.length
-        let topic = NSAttributedString(string: text, attributes: [.font: monoSmallFont, .foregroundColor: NSColor.secondaryLabelColor])
-        result.append(topic)
-        // Use result.length delta — NSRange needs UTF-16 code unit count, not Swift.count
-        addLinks(to: result, in: NSRange(location: topicStart, length: result.length - topicStart))
-
-    case .system:
-        let text = "• \(message.body)"
-        let system = NSAttributedString(string: text, attributes: [.font: monoSmallFont, .foregroundColor: NSColor.secondaryLabelColor])
-        result.append(system)
+/// Resolve a shared `FontRole` to the exact `NSFont` the original code used.
+private func nsFont(for role: MessageAttributedStringBuilder.FontRole) -> NSFont {
+    switch role {
+    case .mono:      return NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    case .monoBold:  return NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)
+    case .monoSmall: return NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     }
+}
+
+/// Resolve a shared `ColorRole` to the exact `NSColor` the original code used.
+/// `.nick` reproduces the original appearance-aware dynamic color so it still
+/// tracks light/dark mode at draw time.
+private func nsColor(for role: MessageAttributedStringBuilder.ColorRole) -> NSColor {
+    switch role {
+    case .primary:   return NSColor.labelColor
+    case .secondary: return NSColor.secondaryLabelColor
+    case .tertiary:  return NSColor.tertiaryLabelColor
+    case .link:      return NSColor.linkColor
+    case .nick(let idx):
+        return NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let rgb = isDark
+                ? MessageAttributedStringBuilder.darkNickColors[idx]
+                : MessageAttributedStringBuilder.lightNickColors[idx]
+            return NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1.0)
+        }
+    }
+}
+
+/// Convert a platform-neutral `AttributedString` from the shared builder into the
+/// macOS `NSAttributedString`, reapplying the exact AppKit-only bits (font, color,
+/// link underline + link color) so the rendering is identical to before.
+private func makeNSAttributedString(
+    from attr: AttributedString
+) -> NSMutableAttributedString {
+    let result = NSMutableAttributedString()
+    for run in attr.runs {
+        let substring = String(attr[run.range].characters)
+        var attrs: [NSAttributedString.Key: Any] = [:]
+
+        if let style = run.messageStyle {
+            attrs[.font] = nsFont(for: style.font)
+            attrs[.foregroundColor] = nsColor(for: style.color)
+        } else {
+            // Defensive fallback — should not happen for builder output.
+            attrs[.font] = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            attrs[.foregroundColor] = NSColor.labelColor
+        }
+
+        // Links: reproduce the original `.link` + underline + link color stamp.
+        if let url = run.link {
+            attrs[.link] = url
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            attrs[.foregroundColor] = NSColor.linkColor
+        }
+
+        result.append(NSAttributedString(string: substring, attributes: attrs))
+    }
+    return result
+}
+
+/// Helper to build NSAttributedString for a complete message row, from the shared
+/// platform-neutral builder.
+private func buildMessageAttributedString(_ message: ChatMessage) -> NSAttributedString {
+    let result = makeNSAttributedString(
+        from: MessageAttributedStringBuilder.attributedString(for: message)
+    )
 
     // Apply paragraph style across the whole message so inter-message spacing is consistent
     result.addAttribute(
@@ -648,7 +585,7 @@ struct ChatTranscriptView: NSViewRepresentable {
             // "handled" the click, which suppresses its own NSWorkspace.open call
             // that would otherwise fire as a fallback.
             guard let url, isAllowedClickableURL(url) else { return true }
-            NSWorkspace.shared.open(url)
+            URLOpener.open(url)
             return true
         }
     }
@@ -695,14 +632,10 @@ struct TopicTextView: NSViewRepresentable {
     }
 
     private func buildTopicAttributedString(_ text: String) -> NSAttributedString {
-        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        let result = NSMutableAttributedString(
-            string: text,
-            attributes: [.font: font, .foregroundColor: NSColor.labelColor]
-        )
-        // result.length is UTF-16 code unit count; text.count is Swift character count — not the same
-        addLinks(to: result, in: NSRange(location: 0, length: result.length))
-        return result
+        // The shared builder tags topic text as `.monoSmall` (11pt), which
+        // resolves to the original topic-bar font — no override needed.
+        let shared = MessageAttributedStringBuilder.topicAttributedString(text)
+        return makeNSAttributedString(from: shared)
     }
 }
 

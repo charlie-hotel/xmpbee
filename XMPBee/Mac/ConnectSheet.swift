@@ -19,7 +19,8 @@ struct ConnectSheet: View {
     @State private var port = "5222"
     @State private var jid = ""
     @State private var password = ""
-    @State private var resource = "XMPBee"
+    @State private var resource = Platform.defaultResource
+    @State private var priority = 0
     @State private var conferenceServer = ""
     @State private var roomsToJoin = ""
     @State private var nickname = ""
@@ -59,6 +60,15 @@ struct ConnectSheet: View {
                     HStack {
                         field("Port:", text: $port, placeholder: "5222")
                             .frame(maxWidth: 240)
+                        Spacer()
+                    }
+                    HStack {
+                        Text("Priority:")
+                            .font(.system(size: 12))
+                            .frame(width: 140, alignment: .trailing)
+                        Stepper(value: $priority, in: -128...127) {
+                            Text("\(priority)").font(.system(size: 12))
+                        }
                         Spacer()
                     }
                 }
@@ -171,7 +181,8 @@ struct ConnectSheet: View {
         hostname         = dict["hostname"]         as? String ?? ""
         port             = String(dict["port"]      as? Int    ?? 5222)
         jid              = dict["jid"]              as? String ?? ""
-        resource         = dict["resource"]         as? String ?? "XMPBee"
+        resource         = dict["resource"]         as? String ?? Platform.defaultResource
+        priority         = dict["priority"]         as? Int    ?? 0
         nickname         = dict["nickname"]         as? String ?? ""
         conferenceServer = dict["conferenceServer"] as? String ?? ""
         roomsToJoin      = (dict["rooms"] as? [String] ?? []).joined(separator: ", ")
@@ -194,7 +205,7 @@ struct ConnectSheet: View {
         let name = serverName.isEmpty ? connectHost : serverName
         let portNum = Int(port) ?? 5222
         let nick = nickname.isEmpty ? (trimmedJID.components(separatedBy: "@").first ?? "user") : nickname
-        let res = resource.isEmpty ? "XMPBee" : resource
+        let res = resource.isEmpty ? Platform.defaultResource : resource
         let confServer = conferenceServer.isEmpty
             ? "conference.\(trimmedJID.components(separatedBy: "@").last ?? connectHost)"
             : conferenceServer
@@ -207,7 +218,7 @@ struct ConnectSheet: View {
         viewModel.updateAccount(
             server: server,
             name: name, hostname: connectHost, port: portNum,
-            jid: trimmedJID, password: password, resource: res,
+            jid: trimmedJID, password: password, resource: res, priority: priority,
             securityMode: securityMode, nickname: nick,
             conferenceServer: confServer, rooms: rooms
         )
@@ -240,7 +251,7 @@ struct ConnectSheet: View {
         let name = serverName.isEmpty ? connectHost : serverName
         let portNum = Int(port) ?? 5222
         let nick = nickname.isEmpty ? (trimmedJID.components(separatedBy: "@").first ?? "user") : nickname
-        let res = resource.isEmpty ? "XMPBee" : resource
+        let res = resource.isEmpty ? Platform.defaultResource : resource
         let confServer = conferenceServer.isEmpty ? "conference.\(trimmedJID.components(separatedBy: "@").last ?? connectHost)" : conferenceServer
 
         let rooms = roomsToJoin
@@ -255,6 +266,7 @@ struct ConnectSheet: View {
             jid: trimmedJID,
             password: password,
             resource: res,
+            priority: priority,
             securityMode: securityMode,
             nickname: nick,
             conferenceServer: confServer,

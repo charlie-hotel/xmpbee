@@ -3,7 +3,6 @@ import SwiftUI
 /// Left sidebar showing server/channel tree — Liquid Glass design
 struct SidebarView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @FocusState private var sidebarFocused: Bool
 
     var body: some View {
         List(selection: Binding<Room.ID?>(
@@ -24,8 +23,31 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Channels")
-        .focused($sidebarFocused)
-        .focusedSceneValue(\.sidebarHasFocus, sidebarFocused)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("New Connection...") {
+                        viewModel.editingServer = nil
+                        viewModel.showConnectSheet = true
+                    }
+
+                    Divider()
+
+                    Button("Join Room...") {
+                        viewModel.showJoinRoom = true
+                    }
+                    .disabled(viewModel.servers.isEmpty)
+
+                    Button("New DM...") {
+                        viewModel.showNewDM = true
+                    }
+                    .disabled(viewModel.servers.isEmpty)
+                } label: {
+                    Label("New", systemImage: "plus")
+                }
+                .help("New Connection, Room, or DM")
+            }
+        }
     }
 }
 
@@ -42,9 +64,7 @@ struct ServerSection: View {
             set: { server.isExpanded = $0 }
         )) {
             ForEach(server.rooms) { room in
-                ChannelRow(room: room, isSelected: viewModel.selectedRoom?.id == room.id) {
-                    viewModel.selectRoom(room, on: server)
-                }
+                ChannelRow(room: room)
                 .tag(room.id)
                 .contextMenu {
                     Button(room.isDM ? "Close DM" : "Leave Room", role: .destructive) {
@@ -67,7 +87,7 @@ struct ServerSection: View {
                         .frame(width: 7, height: 7)
 
                     Text(server.name)
-                        .font(Theme.sidebarFont)
+                        .font(.system(size: 13))
                         .fontWeight(.semibold)
 
                     if !server.isConnected {
@@ -192,47 +212,40 @@ struct NewDMPopover: View {
     }
 }
 
+/// Plain row content. Selection (highlight + selected-text color) is owned entirely
+/// by the enclosing `List(selection:)` — do NOT wrap this in a Button or apply a custom
+/// selected color: a Button steals key-focus from the list (flipping the native accent
+/// highlight to gray / nothing), and a hand-rolled color fights the system's automatic
+/// selected-text vibrancy. The list handles the click via its `selection` binding.
 struct ChannelRow: View {
-    let room: Room
-    let isSelected: Bool
-    let action: () -> Void
-    @Environment(\.controlActiveState) private var activeState
-    @FocusedValue(\.sidebarHasFocus) private var sidebarHasFocus: Bool?
+    // @ObservedObject (not `let`): the row must re-render on its own when the room's
+    // @Published `unreadCount` / `name` change. Without it, since the row's only input is
+    // the unchanged `room` reference, SwiftUI's view-equality optimization skips
+    // re-rendering it on a parent update, so the unread badge never appears.
+    @ObservedObject var room: Room
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: room.isDM ? "person" : "number")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(room.isDM ? .orange : .secondary)
+        HStack(spacing: 6) {
+            Image(systemName: room.isDM ? "person" : "number")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(room.isDM ? .orange : .secondary)
 
-                Text(room.name)
-                    .font(Theme.sidebarFont)
-                    .foregroundStyle(textColor)
-                    .lineLimit(1)
+            Text(room.name)
+                .font(.system(size: 13))
+                .lineLimit(1)
 
-                Spacer()
+            Spacer()
 
-                if room.unreadCount > 0 {
-                    Text("\(room.unreadCount)")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .glassEffect(.regular.tint(.accentColor), in: .capsule)
-                }
+            if room.unreadCount > 0 {
+                Text("\(room.unreadCount)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .glassEffect(.regular.tint(.accentColor), in: .capsule)
             }
         }
-        .buttonStyle(.plain)
-    }
-
-    private var textColor: Color {
-        if !isSelected {
-            return Theme.channelText
-        }
-        // When selected: white if sidebar has focus AND window is active, otherwise accent color
-        let hasFocus = (sidebarHasFocus == true) && (activeState == .key)
-        return hasFocus ? .white : Theme.selectedChannelText
+        .contentShape(Rectangle())
     }
 }
 
@@ -448,15 +461,3 @@ struct UserSearchPopover: View {
     }
 }
 
-// MARK: - FocusedValues for sidebar focus tracking
-
-struct SidebarHasFocusKey: FocusedValueKey {
-    typealias Value = Bool
-}
-
-extension FocusedValues {
-    var sidebarHasFocus: Bool? {
-        get { self[SidebarHasFocusKey.self] }
-        set { self[SidebarHasFocusKey.self] = newValue }
-    }
-}

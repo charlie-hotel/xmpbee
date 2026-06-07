@@ -33,28 +33,6 @@ struct ContentView: View {
         .frame(minWidth: 800, minHeight: 500)
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
-                Menu {
-                    Button("New Connection...") {
-                        viewModel.editingServer = nil
-                        viewModel.showConnectSheet = true
-                    }
-
-                    Divider()
-
-                    Button("Join Room...") {
-                        viewModel.showJoinRoom = true
-                    }
-                    .disabled(viewModel.servers.isEmpty)
-
-                    Button("New DM...") {
-                        viewModel.showNewDM = true
-                    }
-                    .disabled(viewModel.servers.isEmpty)
-                } label: {
-                    Label("New", systemImage: "plus")
-                }
-                .help("New Connection, Room, or DM")
-
                 Button(action: {
                     browseFilter = ""
                     viewModel.showBrowseRooms = true

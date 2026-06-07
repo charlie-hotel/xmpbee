@@ -1,4 +1,19 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// Per-platform default XMPP resource, so multiple simultaneously-connected clients
+/// don't share a resource and fight over the connection.
+enum Platform {
+    static var defaultResource: String {
+        #if os(macOS)
+        "XMPBee-macOS"
+        #else
+        UIDevice.current.userInterfaceIdiom == .pad ? "XMPBee-iPad" : "XMPBee-iPhone"
+        #endif
+    }
+}
 
 /// Represents an XMPP server connection
 class Server: Identifiable, ObservableObject {

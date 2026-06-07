@@ -20,8 +20,7 @@ struct UserListView: View {
                                     }
                                     Divider()
                                     Button("Copy Nickname") {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(occupant.nick, forType: .string)
+                                        Clipboard.copy(occupant.nick)
                                     }
                                 }
                         }
@@ -36,12 +35,12 @@ struct UserListView: View {
             // Floating glass header
             HStack {
                 Text("Users")
-                    .font(Theme.headerFont)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.channelText)
                 Spacer()
                 if let room = viewModel.selectedRoom {
                     Text("\(room.occupants.count)")
-                        .font(Theme.monoFontSmall)
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -70,7 +69,7 @@ struct OccupantRow: View {
                 .opacity(occupant.prefix.isEmpty ? 0.25 : 1.0)
 
             Text(occupant.displayNick)
-                .font(Theme.sidebarFont)
+                .font(.system(size: 13))
                 .foregroundStyle(Theme.userText)
                 .lineLimit(1)
 

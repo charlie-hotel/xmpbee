@@ -10,7 +10,11 @@ enum Theme {
     static let sidebarBackground = Color.clear
     static let inputBackground = Color.clear
     static let topBarBackground = Color.clear
+    #if os(macOS)
     static let divider = Color(nsColor: .separatorColor)
+    #else
+    static let divider = Color(uiColor: .separator)
+    #endif
 
     // Text colors — use semantic colors for glass readability
     static let chatText = Color.primary

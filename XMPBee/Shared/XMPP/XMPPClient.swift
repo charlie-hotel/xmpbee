@@ -1,5 +1,19 @@
 import Foundation
 import CommonCrypto
+#if os(macOS)
+import os
+private let xmppDisconnectLogger = Logger(subsystem: "com.xmpbee.app", category: "disconnect")
+#endif
+
+/// macOS-only debug logging for connection drops — helps attribute disconnect/retry
+/// churn to the REMOTE (server EOF / `</stream:stream>` / `<stream:error>`), the CLIENT
+/// (ping/idle timeout), or a NETWORK error. No-op on other platforms.
+/// View in Console.app filtered on subsystem `com.xmpbee.app`, category `disconnect`.
+func logDisconnectReason(_ category: String, _ detail: String) {
+    #if os(macOS)
+    xmppDisconnectLogger.notice("[\(category, privacy: .public)] \(detail, privacy: .public)")
+    #endif
+}
 
 /// XMPP protocol events
 protocol XMPPClientDelegate: AnyObject {
@@ -65,7 +79,9 @@ class XMPPClient: XMLStreamParserDelegate {
     private(set) var jid: String = ""
     private var password: String = ""
     private(set) var domain: String = ""
-    private(set) var resource: String = "XMPBee"
+    private(set) var resource: String = Platform.defaultResource
+    /// Presence priority advertised to the server (XEP: higher wins for routing).
+    private(set) var priority: Int = 0
     private(set) var isAuthenticated = false
     private(set) var boundJID: String = ""
 
@@ -123,10 +139,12 @@ class XMPPClient: XMLStreamParserDelegate {
     // MARK: - Connection
 
     func connect(host: String, port: Int, jid: String, password: String,
-                 resource: String = "XMPBee", securityMode: SecurityMode = .requireTLS) {
+                 resource: String = Platform.defaultResource, priority: Int = 0,
+                 securityMode: SecurityMode = .requireTLS) {
         self.jid = jid
         self.password = password
         self.resource = resource
+        self.priority = priority
         self.domain = jid.components(separatedBy: "@").last ?? host
         self.tlsNegotiated = false
         self.startTLSPending = false
@@ -146,6 +164,7 @@ class XMPPClient: XMLStreamParserDelegate {
         connection?.onDisconnected = { [weak self] error in
             guard let self = self else { return }
             self.isAuthenticated = false
+            logDisconnectReason("DOWN", "connection down (socket error: \(error.map { "\($0)" } ?? "none — clean / client-initiated"))")
             self.delegate?.xmppDidDisconnect(self, error: error)
         }
         connection?.onTLSReady = { [weak self] in
@@ -578,6 +597,7 @@ class XMPPClient: XMLStreamParserDelegate {
         var xml = "<presence>"
         if let show = show { xml += "<show>\(show.xmlEscaped)</show>" }
         if let status = status { xml += "<status>\(status.xmlEscaped)</status>" }
+        xml += "<priority>\(priority)</priority>"
         xml += "</presence>"
         connection?.send(xml)
     }
@@ -612,9 +632,7 @@ class XMPPClient: XMLStreamParserDelegate {
         connection?.send(iq)
         pingTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            #if DEBUG
-            print("[XMPP] Ping timeout — reconnecting")
-            #endif
+            logDisconnectReason("CLIENT", "keepalive ping timed out (no response in 15s) — closing to reconnect")
             self.stopPingTimer()
             self.disconnect()
         }
@@ -696,6 +714,7 @@ class XMPPClient: XMLStreamParserDelegate {
     }
 
     func parserDidCloseStream(_ parser: XMLStreamParser) {
+        logDisconnectReason("REMOTE", "server closed the XML stream (</stream:stream>)")
         delegate?.xmppDidDisconnect(self, error: nil)
     }
 
@@ -835,6 +854,14 @@ class XMPPClient: XMLStreamParserDelegate {
         case "presence":
             handlePresence(stanza)
 
+        case "stream:error":
+            // Server-initiated stream teardown with a reason (e.g. <conflict/> when a
+            // same-resource client displaces this one, <policy-violation/>, <system-shutdown/>).
+            // Previously fell through to `default` and was dropped, so the reason was lost.
+            let condition = stanza.children.first(where: { $0.name != "text" })?.name ?? "unknown"
+            let text = stanza.child(named: "text")?.text ?? ""
+            logDisconnectReason("REMOTE", "server sent <stream:error>: \(condition)\(text.isEmpty ? "" : " — \(text)")")
+
         default:
             break
         }
@@ -845,6 +872,7 @@ class XMPPClient: XMLStreamParserDelegate {
         // stream is open — those never reach this method.  Errors that do reach here
         // are either pre-stream failures or exhausted recovery (3 consecutive failures).
         // Surface the error and disconnect; the reconnect mechanism handles the rest.
+        logDisconnectReason("STREAM", "XML stream parse error (recovery exhausted): \(error.localizedDescription)")
         delegate?.xmpp(self, didFailWithError: .streamError(error.localizedDescription))
         disconnect()
     }
@@ -856,9 +884,25 @@ class XMPPClient: XMLStreamParserDelegate {
         let id = iq["id"] ?? ""
         let from = iq["from"] ?? ""
 
-        // Pings are handled at the connection layer (fast path on stream thread)
-        // so we just ignore them here
-        if type == "get", iq.child(named: "ping") != nil { return }
+        // Keep-alive ping (XEP-0199). The stream-thread fast path (handlePingFast)
+        // usually answers first, but it's strict (exact `from`, single clean <iq> in one
+        // read) and has no fallback — so a ping it misses (no/odd `from`, split across TCP
+        // reads, or batched with other stanzas) would go UNANSWERED and the server drops us
+        // with <stream:error>connection-timeout. This is the reliable fallback.
+        //
+        // Security: only pong our own server (empty `from` = server-directed, our domain,
+        // or our own JID — the same allow-list `isValidIQResponseFrom` uses). We never pong
+        // arbitrary peers; that would leak online status. A duplicate-id result (fast path +
+        // here) is harmless — the server ignores it.
+        if type == "get", iq.child(named: "ping") != nil {
+            if from.isEmpty || from == domain || from == jid || from.hasPrefix(jid + "/") {
+                let pong = from.isEmpty
+                    ? "<iq type='result' id='\(id.xmlEscaped)'/>"
+                    : "<iq type='result' id='\(id.xmlEscaped)' to='\(from.xmlEscaped)'/>"
+                connection?.send(pong)
+            }
+            return
+        }
 
         // Bind / session handshake — match by the random IDs we generated at
         // request time.  Both are server-directed, so the response's `from`
