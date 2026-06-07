@@ -134,11 +134,27 @@ struct ChatView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if let room = viewModel.selectedRoom {
+                    let isBlockedDM = room.isDM && (viewModel.selectedServer?.isBlocked(jid: room.jid) ?? false)
                     Text(room.displayName)
                         .font(Theme.monoFontBold)
                         .foregroundStyle(Theme.channelText)
+                        .strikethrough(isBlockedDM, color: .secondary)
 
-                    if !room.topic.isEmpty && !topicHovered {
+                    if isBlockedDM {
+                        Image(systemName: "person.slash.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Button("Unblock") {
+                            if let server = viewModel.selectedServer {
+                                viewModel.unblockJID(room.jid, on: server)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.blue)
+                    }
+
+                    if !isBlockedDM && !room.topic.isEmpty && !topicHovered {
                         Text("—")
                             .foregroundStyle(.tertiary)
                         Text(room.topic)

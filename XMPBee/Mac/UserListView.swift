@@ -22,6 +22,12 @@ struct UserListView: View {
                                     Button("Copy Nickname") {
                                         Clipboard.copy(occupant.nick)
                                     }
+                                    Divider()
+                                    Button("Block \(occupant.displayNick)", role: .destructive) {
+                                        if let server = viewModel.selectedServer {
+                                            viewModel.blockNick(occupant.nick, on: server)
+                                        }
+                                    }
                                 }
                         }
                     }

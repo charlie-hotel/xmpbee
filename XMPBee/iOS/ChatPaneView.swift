@@ -33,6 +33,28 @@ struct ChatPaneView: View {
         .background(Theme.chatBackground)
         .navigationTitle(viewModel.selectedRoom?.displayName ?? "XMPBee")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let room = viewModel.selectedRoom, room.isDM,
+               viewModel.selectedServer?.isBlocked(jid: room.jid) == true {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.slash.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Text(room.displayName)
+                            .font(.headline)
+                            .strikethrough(true, color: .secondary)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Unblock") {
+                        if let server = viewModel.selectedServer {
+                            viewModel.unblockJID(room.jid, on: server)
+                        }
+                    }
+                }
+            }
+        }
         .safeAreaInset(edge: .top) {
             ReconnectBanner()
         }

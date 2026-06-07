@@ -28,6 +28,19 @@ class Server: Identifiable, ObservableObject {
     @Published var rooms: [Room] = []
     @Published var isExpanded: Bool = true
 
+    // Client-side blocklist, scoped to this account.
+    // blockedJIDs: bare JIDs (DMs/roster contacts). blockedNicks: MUC nicknames, server-wide.
+    @Published var blockedJIDs: Set<String> = []
+    @Published var blockedNicks: Set<String> = []
+
+    func isBlocked(jid: String) -> Bool {
+        blockedJIDs.contains(jid.lowercased())
+    }
+
+    func isBlocked(nick: String) -> Bool {
+        blockedNicks.contains(nick)
+    }
+
     var domain: String {
         jid.components(separatedBy: "@").last ?? hostname
     }

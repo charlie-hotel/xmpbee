@@ -124,7 +124,9 @@ private struct ServerRows: View {
 
             if server.isExpanded {
                 ForEach(server.rooms) { room in
-                    GlassChannelRow(room: room, isSelected: viewModel.selectedRoom?.id == room.id) {
+                    GlassChannelRow(room: room,
+                                    isSelected: viewModel.selectedRoom?.id == room.id,
+                                    isBlocked: room.isDM && server.isBlocked(jid: room.jid)) {
                         viewModel.selectRoom(room, on: server)
                         withAnimation(.easeInOut(duration: 0.25)) { drawerOpen = false }
                     }
@@ -138,6 +140,24 @@ private struct ServerRows: View {
                             Label(room.isDM ? "Close" : "Leave", systemImage: "rectangle.portrait.and.arrow.right")
                         }
                     }
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        if room.isDM {
+                            if server.isBlocked(jid: room.jid) {
+                                Button {
+                                    viewModel.unblockJID(room.jid, on: server)
+                                } label: {
+                                    Label("Unblock", systemImage: "person.fill.checkmark")
+                                }
+                                .tint(.blue)
+                            } else {
+                                Button(role: .destructive) {
+                                    viewModel.blockJID(room.jid, on: server)
+                                } label: {
+                                    Label("Block", systemImage: "person.slash")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -149,18 +169,20 @@ private struct ServerRows: View {
 private struct GlassChannelRow: View {
     let room: Room
     let isSelected: Bool
+    var isBlocked: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: room.isDM ? "person" : "number")
+                Image(systemName: room.isDM ? (isBlocked ? "person.slash" : "person") : "number")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(room.isDM ? .orange : .secondary)
                     .frame(width: 20)
                 Text(room.name)
                     .font(.system(size: 16))
                     .foregroundStyle(isSelected ? Theme.selectedChannelText : Theme.channelText)
+                    .strikethrough(isBlocked, color: .secondary)
                     .lineLimit(1)
                 Spacer()
                 if room.unreadCount > 0 {

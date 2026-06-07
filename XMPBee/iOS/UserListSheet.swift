@@ -28,6 +28,14 @@ struct OccupantList: View {
                 } label: {
                     Label("Copy Nickname", systemImage: "doc.on.doc")
                 }
+                Divider()
+                Button(role: .destructive) {
+                    if let server = viewModel.selectedServer {
+                        viewModel.blockNick(occupant.nick, on: server)
+                    }
+                } label: {
+                    Label("Block \(occupant.displayNick)", systemImage: "person.slash")
+                }
             } label: {
                 OccupantListRow(occupant: occupant)
                     .frame(maxWidth: .infinity, alignment: .leading)

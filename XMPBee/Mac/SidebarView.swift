@@ -64,9 +64,21 @@ struct ServerSection: View {
             set: { server.isExpanded = $0 }
         )) {
             ForEach(server.rooms) { room in
-                ChannelRow(room: room)
+                ChannelRow(room: room, isBlocked: room.isDM && server.isBlocked(jid: room.jid))
                 .tag(room.id)
                 .contextMenu {
+                    if room.isDM {
+                        if server.isBlocked(jid: room.jid) {
+                            Button("Unblock") {
+                                viewModel.unblockJID(room.jid, on: server)
+                            }
+                        } else {
+                            Button("Block", role: .destructive) {
+                                viewModel.blockJID(room.jid, on: server)
+                            }
+                        }
+                        Divider()
+                    }
                     Button(room.isDM ? "Close DM" : "Leave Room", role: .destructive) {
                         viewModel.leaveRoom(room, on: server)
                     }
@@ -223,16 +235,20 @@ struct ChannelRow: View {
     // the unchanged `room` reference, SwiftUI's view-equality optimization skips
     // re-rendering it on a parent update, so the unread badge never appears.
     @ObservedObject var room: Room
+    // Blocked state is owned by the server (server.blockedJIDs), so it's passed in by
+    // ServerSection rather than read here — the parent observes the server and re-renders.
+    var isBlocked: Bool = false
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: room.isDM ? "person" : "number")
+            Image(systemName: room.isDM ? (isBlocked ? "person.slash" : "person") : "number")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(room.isDM ? .orange : .secondary)
 
             Text(room.name)
                 .font(.system(size: 13))
                 .lineLimit(1)
+                .strikethrough(isBlocked, color: .secondary)
 
             Spacer()
 

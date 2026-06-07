@@ -942,6 +942,67 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         }
     }
 
+    // MARK: - Blocking
+    //
+    // Client-side blocking, scoped per account. JIDs block DM/roster contacts;
+    // nicks block MUC participants server-wide (Occupant carries no real JID, so
+    // MUC blocking can only key on the nick). Enforcement lives in the message and
+    // presence handlers; these methods own the model, persistence, and purge.
+
+    func blockJID(_ jid: String, on server: Server) {
+        let key = jid.lowercased()
+        guard server.blockedJIDs.insert(key).inserted else { return }
+        appendSavedBlock(key, field: "blockedJIDs", forJID: server.jid)
+        objectWillChange.send()
+        // The DM thread is deliberately kept (just marked blocked); new inbound
+        // messages from this JID are dropped by xmppDidReceiveMessageMain.
+    }
+
+    func unblockJID(_ jid: String, on server: Server) {
+        let key = jid.lowercased()
+        guard server.blockedJIDs.remove(key) != nil else { return }
+        removeSavedBlock(key, field: "blockedJIDs", forJID: server.jid)
+        objectWillChange.send()
+    }
+
+    func blockNick(_ nick: String, on server: Server) {
+        guard server.blockedNicks.insert(nick).inserted else { return }
+        appendSavedBlock(nick, field: "blockedNicks", forJID: server.jid)
+        // Purge their current footprint from every MUC: occupant entry + transcript.
+        // Messages store the sanitized display nick, so match on that.
+        let safe = nick.sanitizedForNicknameDisplay()
+        for room in server.rooms where !room.isDM {
+            room.occupants.removeAll { $0.nick == nick }
+            room.pendingOccupants.removeAll { $0.nick == nick }
+            room.messages.removeAll { $0.sender == safe }
+        }
+        objectWillChange.send()
+    }
+
+    func unblockNick(_ nick: String, on server: Server) {
+        guard server.blockedNicks.remove(nick) != nil else { return }
+        removeSavedBlock(nick, field: "blockedNicks", forJID: server.jid)
+        objectWillChange.send()
+    }
+
+    private func appendSavedBlock(_ value: String, field: String, forJID jid: String) {
+        Self.mutateSavedAccount(jid: jid) { entry in
+            var list = entry[field] as? [String] ?? []
+            if !list.contains(value) {
+                list.append(value)
+                entry[field] = list
+            }
+        }
+    }
+
+    private func removeSavedBlock(_ value: String, field: String, forJID jid: String) {
+        Self.mutateSavedAccount(jid: jid) { entry in
+            var list = entry[field] as? [String] ?? []
+            list.removeAll { $0 == value }
+            entry[field] = list
+        }
+    }
+
     // MARK: - Internal Helpers
 
     private func server(for client: XMPPClient) -> Server? {
@@ -1037,6 +1098,13 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         reconnectionTimers[server.id] = nil
         // UI projection: connected — clear any reconnect banner state.
         reconnectStatus.removeValue(forKey: server.id)
+
+        // Load this account's blocklist before any rooms join or stanzas arrive, so
+        // enforcement (dropped messages/presence) is active from the first stanza.
+        if let accountDict = savedSettings(forJID: server.jid) {
+            server.blockedJIDs = Set((accountDict["blockedJIDs"] as? [String] ?? []).map { $0.lowercased() })
+            server.blockedNicks = Set(accountDict["blockedNicks"] as? [String] ?? [])
+        }
 
         // Join configured rooms
         if let config = pendingConfig[server.id] {
@@ -1166,6 +1234,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 // the DM contacts list and don't construct a bare DM JID from
                 // the room's local-part (the original MA-002 bug).
                 let participantNick = nick
+                // Blocked nick: drop the MUC PM entirely — no tab, no badge, no notification.
+                if server.isBlocked(nick: participantNick) { return }
                 let safeParticipantNick = participantNick.sanitizedForNicknameDisplay()
                 let roomLabel = joinedMUC?.displayName ?? bareFrom
 
@@ -1217,6 +1287,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             }
 
             // Regular DM path — bare JID is the sender's user account.
+            // Blocked JID: drop the message. The DM thread (if open) is kept but
+            // receives nothing new; no tab is created for a blocked first-contact.
+            if server.isBlocked(jid: bareFrom) { return }
             let senderNick = bareFrom.components(separatedBy: "@").first ?? bareFrom
             let safeSenderNick = senderNick.sanitizedForNicknameDisplay()
 
@@ -1273,6 +1346,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // from that address and render them as if they were chat messages —
         // exactly the "mirrored DM" bug pattern.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
+
+        // Blocked nick (server-wide for this account): drop the groupchat message.
+        if server.isBlocked(nick: nick) { return }
 
         let timestamp = message.timestamp ?? Date()
 
@@ -1368,6 +1444,14 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         guard let roomJID = presence.roomJID, let nick = presence.nick else { return }
         // MUC presence only belongs to actual MUC rooms — never to DM or MUC-PM tabs.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
+
+        // Blocked nick: keep them out of the occupant list and suppress join/part noise.
+        if server.isBlocked(nick: nick) {
+            room.occupants.removeAll { $0.nick == nick }
+            room.pendingOccupants.removeAll { $0.nick == nick }
+            objectWillChange.send()
+            return
+        }
 
         let affiliation: Occupant.Affiliation = {
             switch presence.affiliation {
