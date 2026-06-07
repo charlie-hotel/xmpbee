@@ -82,7 +82,7 @@
 		5AAAD73703917FFEF47A9750 /* Shared/Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Theme.swift; sourceTree = "<group>"; };
 		61A58899A3909B86718AD240 /* Shared/ViewModels/ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/ViewModels/ChatViewModel.swift; sourceTree = "<group>"; };
 		67FC88E1F5F55E4454A147CC /* Mac/App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/App.swift; sourceTree = "<group>"; };
-		68EB88AED944282D28F9C42C /* XMPBee Desktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "XMPBee Desktop.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68EB88AED944282D28F9C42C /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "XMPBee.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D9F35C43F93C00196950A4F /* Shared/Models/Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Models/Server.swift; sourceTree = "<group>"; };
 		92A0B740C025128D88CFB205 /* iOS/ChatPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/ChatPaneView.swift; sourceTree = "<group>"; };
 		A1019A4D8B494F01949B4B88 /* Mac/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/ContentView.swift; sourceTree = "<group>"; };
@@ -92,7 +92,7 @@
 		B5000000000000000000BB02 /* iOS/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/ContentView.swift; sourceTree = "<group>"; };
 		B5000000000000000000BB03 /* iOS/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = iOS/Info.plist; sourceTree = "<group>"; };
 		B5000000000000000000BB04 /* iOS/XMPBee-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS/XMPBee-iOS.entitlements"; sourceTree = "<group>"; };
-		B5000000000000000000BB05 /* XMPBee iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "XMPBee iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B5000000000000000000BB05 /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "XMPBee.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B5C3F1A200000000000001B6 /* iOS/DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/DrawerView.swift; sourceTree = "<group>"; };
 		B5C3F1A200000000000001B7 /* iOS/iPadSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/iPadSplitView.swift; sourceTree = "<group>"; };
 		C1000000000000000000BB01 /* iOS/JoinRoomScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/JoinRoomScreen.swift; sourceTree = "<group>"; };
@@ -171,8 +171,8 @@
 		77CCCA5AE2D32BB65CB73519 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				68EB88AED944282D28F9C42C /* XMPBee Desktop.app */,
-				B5000000000000000000BB05 /* XMPBee iOS.app */,
+				68EB88AED944282D28F9C42C /* XMPBee.app */,
+				B5000000000000000000BB05 /* XMPBee.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -256,7 +256,7 @@
 			);
 			name = "XMPBee Mobile";
 			productName = "XMPBee iOS";
-			productReference = B5000000000000000000BB05 /* XMPBee iOS.app */;
+			productReference = B5000000000000000000BB05 /* XMPBee.app */;
 			productType = "com.apple.product-type.application";
 		};
 		EEFA3E70D98A0F966999694F /* XMPBee Desktop */ = {
@@ -273,7 +273,7 @@
 			);
 			name = "XMPBee Desktop";
 			productName = XMPBee;
-			productReference = 68EB88AED944282D28F9C42C /* XMPBee Desktop.app */;
+			productReference = 68EB88AED944282D28F9C42C /* XMPBee.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -428,7 +428,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = XMPBee;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
 				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
@@ -475,7 +475,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = XMPBee;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -601,7 +601,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app.ios;
-				PRODUCT_NAME = "XMPBee iOS";
+				PRODUCT_NAME = XMPBee;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -632,7 +632,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app.ios;
-				PRODUCT_NAME = "XMPBee iOS";
+				PRODUCT_NAME = XMPBee;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

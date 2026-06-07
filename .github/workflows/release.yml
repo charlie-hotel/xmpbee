@@ -19,7 +19,7 @@ jobs:
         run: |
           xcodebuild archive \
             -project XMPBee.xcodeproj \
-            -scheme XMPBee \
+            -scheme "XMPBee Desktop" \
             -configuration Release \
             -archivePath build/XMPBee.xcarchive \
             CODE_SIGN_IDENTITY="" \
