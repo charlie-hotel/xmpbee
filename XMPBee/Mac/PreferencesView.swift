@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 /// Notification & sound preferences panel
 struct PreferencesView: View {
+    @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var notifications: NotificationManager
     @AppStorage("hideJoinPart") private var hideJoinPart = true
     @Environment(\.dismiss) private var dismiss
@@ -90,6 +91,13 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            // Blocked contacts / nicks, per account
+            GroupBox("Blocked") {
+                BlockedAccountsList(viewModel: viewModel)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 Spacer()
                 Button("Done") {
@@ -171,6 +179,90 @@ struct PreferencesView: View {
             Text("Supported: .aiff, .wav, .caf, .mp3 (max 30 seconds)")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Blocked accounts list
+
+/// Per-account blocklist with unblock controls. Bounded in height so a long list
+/// scrolls instead of stretching the Preferences sheet.
+private struct BlockedAccountsList: View {
+    @ObservedObject var viewModel: ChatViewModel
+
+    private var accountsWithBlocks: [Server] {
+        viewModel.servers.filter { !$0.blockedJIDs.isEmpty || !$0.blockedNicks.isEmpty }
+    }
+
+    var body: some View {
+        if accountsWithBlocks.isEmpty {
+            Text("No blocked contacts")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .italic()
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(accountsWithBlocks) { server in
+                        BlockedAccountSection(viewModel: viewModel, server: server)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 160)
+        }
+    }
+}
+
+private struct BlockedAccountSection: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @ObservedObject var server: Server
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(server.name)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(server.blockedJIDs.sorted(), id: \.self) { jid in
+                BlockedRow(symbol: "person.slash", label: jid, sublabel: nil) {
+                    viewModel.unblockJID(jid, on: server)
+                }
+            }
+            ForEach(server.blockedNicks.sorted(), id: \.self) { nick in
+                BlockedRow(symbol: "number", label: nick, sublabel: "MUC nick") {
+                    viewModel.unblockNick(nick, on: server)
+                }
+            }
+        }
+    }
+}
+
+private struct BlockedRow: View {
+    let symbol: String
+    let label: String
+    let sublabel: String?
+    let unblock: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            Text(label)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let sublabel {
+                Text("(\(sublabel))")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Unblock", action: unblock)
+                .font(.system(size: 11))
+                .controlSize(.small)
         }
     }
 }

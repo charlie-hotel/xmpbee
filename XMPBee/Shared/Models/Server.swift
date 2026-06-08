@@ -41,6 +41,12 @@ class Server: Identifiable, ObservableObject {
         blockedNicks.contains(nick)
     }
 
+    /// Sanitized display forms of blocked MUC nicks. Transcript messages store the
+    /// sanitized sender (not the raw nick), so hiding them keys on this.
+    var blockedDisplayNicks: Set<String> {
+        Set(blockedNicks.map { $0.sanitizedForNicknameDisplay() })
+    }
+
     var domain: String {
         jid.components(separatedBy: "@").last ?? hostname
     }

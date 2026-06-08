@@ -85,6 +85,14 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         let server = Server(name: name, hostname: hostname, port: port, jid: jid)
         servers.append(server)
 
+        // Load this account's persisted blocklist immediately (not just on auth) so it's
+        // enforced from the first stanza AND visible in Settings while disconnected. A
+        // brand-new account has no saved dict yet, so the sets come back empty.
+        if let dict = savedSettings(forJID: jid) {
+            server.blockedJIDs = Set((dict["blockedJIDs"] as? [String] ?? []).map { $0.lowercased() })
+            server.blockedNicks = Set(dict["blockedNicks"] as? [String] ?? [])
+        }
+
         pendingConfig[server.id] = (nickname: nickname, confServer: conferenceServer, rooms: rooms)
 
         let client = XMPPClient()
@@ -951,6 +959,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
     func blockJID(_ jid: String, on server: Server) {
         let key = jid.lowercased()
+        guard key != server.jid.lowercased() else { return }   // can't block yourself
         guard server.blockedJIDs.insert(key).inserted else { return }
         appendSavedBlock(key, field: "blockedJIDs", forJID: server.jid)
         objectWillChange.send()
@@ -966,16 +975,11 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     }
 
     func blockNick(_ nick: String, on server: Server) {
+        guard !isOwnNick(nick, on: server) else { return }     // can't block yourself
         guard server.blockedNicks.insert(nick).inserted else { return }
         appendSavedBlock(nick, field: "blockedNicks", forJID: server.jid)
-        // Purge their current footprint from every MUC: occupant entry + transcript.
-        // Messages store the sanitized display nick, so match on that.
-        let safe = nick.sanitizedForNicknameDisplay()
-        for room in server.rooms where !room.isDM {
-            room.occupants.removeAll { $0.nick == nick }
-            room.pendingOccupants.removeAll { $0.nick == nick }
-            room.messages.removeAll { $0.sender == safe }
-        }
+        // Non-destructive: their occupant entries and messages stay in the model and
+        // are hidden by the views, so unblock reveals them again instantly.
         objectWillChange.send()
     }
 
@@ -983,6 +987,21 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         guard server.blockedNicks.remove(nick) != nil else { return }
         removeSavedBlock(nick, field: "blockedNicks", forJID: server.jid)
         objectWillChange.send()
+    }
+
+    /// Count of a room's occupants excluding nicks blocked on its owning server.
+    func visibleOccupantCount(in room: Room) -> Int {
+        guard let server = servers.first(where: { $0.rooms.contains { $0.id == room.id } }) else {
+            return room.occupants.count
+        }
+        return room.occupants.filter { !server.isBlocked(nick: $0.nick) }.count
+    }
+
+    /// True if `nick` is our own nick on this server (the configured nick or any
+    /// joined room's nick). Guards against blocking yourself.
+    private func isOwnNick(_ nick: String, on server: Server) -> Bool {
+        if let mine = nickname(on: server), nick == mine { return true }
+        return server.rooms.contains { !$0.isDM && $0.nickname == nick }
     }
 
     private func appendSavedBlock(_ value: String, field: String, forJID jid: String) {
@@ -1098,13 +1117,6 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         reconnectionTimers[server.id] = nil
         // UI projection: connected — clear any reconnect banner state.
         reconnectStatus.removeValue(forKey: server.id)
-
-        // Load this account's blocklist before any rooms join or stanzas arrive, so
-        // enforcement (dropped messages/presence) is active from the first stanza.
-        if let accountDict = savedSettings(forJID: server.jid) {
-            server.blockedJIDs = Set((accountDict["blockedJIDs"] as? [String] ?? []).map { $0.lowercased() })
-            server.blockedNicks = Set(accountDict["blockedNicks"] as? [String] ?? [])
-        }
 
         // Join configured rooms
         if let config = pendingConfig[server.id] {
@@ -1347,8 +1359,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // exactly the "mirrored DM" bug pattern.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
-        // Blocked nick (server-wide for this account): drop the groupchat message.
-        if server.isBlocked(nick: nick) { return }
+        // Blocked nick (server-wide for this account): store the message but hide it
+        // (views filter it out) and suppress all side effects, so unblock reveals it.
+        let blocked = server.isBlocked(nick: nick)
 
         let timestamp = message.timestamp ?? Date()
 
@@ -1384,6 +1397,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
         room.messages.append(chatMsg)
         objectWillChange.send()
+
+        // While blocked the message is hidden, so skip logging, unread, and notifications.
+        if blocked { return }
 
         // Log to disk.  Sender is sanitized so spoofing markers persist into the
         // archive; the raw nick is otherwise discarded at this layer.
@@ -1445,13 +1461,10 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // MUC presence only belongs to actual MUC rooms — never to DM or MUC-PM tabs.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
-        // Blocked nick: keep them out of the occupant list and suppress join/part noise.
-        if server.isBlocked(nick: nick) {
-            room.occupants.removeAll { $0.nick == nick }
-            room.pendingOccupants.removeAll { $0.nick == nick }
-            objectWillChange.send()
-            return
-        }
+        // Blocked nick: still track their presence (so unblock can restore them if
+        // they're still present) but suppress join/part notifications. The occupant
+        // list and join/part transcript lines are hidden by the views while blocked.
+        let blocked = server.isBlocked(nick: nick)
 
         let affiliation: Occupant.Affiliation = {
             switch presence.affiliation {
@@ -1485,7 +1498,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                     type: .part, senderColor: ChatMessage.colorForNick(safeNick)
                 )
                 room.messages.append(msg)
-                notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: false)
+                if !blocked {
+                    notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: false)
+                }
             }
         } else {
             let occupant = Occupant(nick: nick, affiliation: affiliation, role: role)
@@ -1522,7 +1537,9 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                         type: .join, senderColor: ChatMessage.colorForNick(safeNick)
                     )
                     room.messages.append(msg)
-                    notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: true)
+                    if !blocked {
+                        notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: true)
+                    }
                 }
             }
         }

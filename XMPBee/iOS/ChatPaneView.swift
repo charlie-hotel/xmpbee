@@ -73,7 +73,7 @@ struct ChatPaneView: View {
     private func roomView(_ room: Room) -> some View {
         // Floating glass composer docked at the bottom; the transcript scrolls
         // underneath it and shows through the glass (mirrors the macOS input bar).
-        RoomTranscriptView(room: room, hideJoinPart: hideJoinPart, scrollTrigger: viewModel.scrollToBottomTrigger)
+        RoomTranscriptView(room: room, hideJoinPart: hideJoinPart, scrollTrigger: viewModel.scrollToBottomTrigger, blockedSenders: viewModel.selectedServer?.blockedDisplayNicks ?? [])
             // Tap the transcript to dismiss the keyboard. Simultaneous so it doesn't
             // swallow link taps, text selection, or scrolling.
             .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
@@ -176,6 +176,8 @@ private struct RoomTranscriptView: View {
     @ObservedObject var room: Room
     let hideJoinPart: Bool
     let scrollTrigger: Int
+    /// Sanitized display nicks blocked on this room's server — their lines are hidden.
+    var blockedSenders: Set<String> = []
 
     /// True when the user is at (or within ~24pt of) the bottom — mirrors the macOS
     /// `stickToBottom` gate so new messages only auto-scroll when already at the end.
@@ -183,8 +185,11 @@ private struct RoomTranscriptView: View {
 
     /// Messages to display — mirrors the macOS transcript's join/part/quit hiding.
     private var displayedMessages: [ChatMessage] {
-        guard hideJoinPart else { return room.messages }
-        return room.messages.filter { $0.type != .join && $0.type != .part && $0.type != .quit }
+        room.messages.filter { msg in
+            if blockedSenders.contains(msg.sender) { return false }
+            if hideJoinPart && (msg.type == .join || msg.type == .part || msg.type == .quit) { return false }
+            return true
+        }
     }
 
     var body: some View {

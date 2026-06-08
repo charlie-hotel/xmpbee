@@ -4,13 +4,19 @@ import SwiftUI
 struct UserListView: View {
     @ObservedObject var viewModel: ChatViewModel
 
+    /// Occupants minus any blocked nicks on the selected server.
+    private func visibleOccupants(_ room: Room) -> [Occupant] {
+        guard let server = viewModel.selectedServer else { return room.occupants }
+        return room.occupants.filter { !server.isBlocked(nick: $0.nick) }
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             // User list
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if let room = viewModel.selectedRoom, !room.isDM {
-                        ForEach(room.occupants) { occupant in
+                        ForEach(visibleOccupants(room)) { occupant in
                             OccupantRow(occupant: occupant)
                                 .contextMenu {
                                     Button("Send Message") {
@@ -22,10 +28,12 @@ struct UserListView: View {
                                     Button("Copy Nickname") {
                                         Clipboard.copy(occupant.nick)
                                     }
-                                    Divider()
-                                    Button("Block \(occupant.displayNick)", role: .destructive) {
-                                        if let server = viewModel.selectedServer {
-                                            viewModel.blockNick(occupant.nick, on: server)
+                                    if occupant.nick != room.nickname {
+                                        Divider()
+                                        Button("Block \(occupant.displayNick)", role: .destructive) {
+                                            if let server = viewModel.selectedServer {
+                                                viewModel.blockNick(occupant.nick, on: server)
+                                            }
                                         }
                                     }
                                 }
@@ -45,7 +53,7 @@ struct UserListView: View {
                     .foregroundStyle(Theme.channelText)
                 Spacer()
                 if let room = viewModel.selectedRoom {
-                    Text("\(room.occupants.count)")
+                    Text("\(visibleOccupants(room).count)")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)

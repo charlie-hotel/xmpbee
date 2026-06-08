@@ -12,7 +12,7 @@ struct PreferencesScreen: View {
 
     var body: some View {
         NavigationStack {
-            PreferencesFormBody(notifications: notifications)
+            PreferencesFormBody(viewModel: viewModel, notifications: notifications)
                 .navigationTitle("Preferences")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -31,6 +31,7 @@ struct PreferencesScreen: View {
 // MARK: - Form body (factored out to keep the type-checker happy)
 
 private struct PreferencesFormBody: View {
+    @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var notifications: NotificationManager
     @AppStorage("hideJoinPart") private var hideJoinPart = true
 
@@ -39,6 +40,37 @@ private struct PreferencesFormBody: View {
             displaySection
             notifySection
             soundSection
+            blockedSections
+        }
+    }
+
+    // MARK: Blocked
+
+    /// One section per account that has any blocks (JIDs and/or MUC nicks), each row
+    /// with a trailing Unblock button. A single "No blocked contacts" section shows
+    /// when nothing is blocked anywhere.
+    @ViewBuilder private var blockedSections: some View {
+        let accounts = viewModel.servers.filter { !$0.blockedJIDs.isEmpty || !$0.blockedNicks.isEmpty }
+        if accounts.isEmpty {
+            Section("Blocked") {
+                Text("No blocked contacts")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            ForEach(accounts) { server in
+                Section("Blocked · \(server.name)") {
+                    ForEach(server.blockedJIDs.sorted(), id: \.self) { jid in
+                        BlockedRowIOS(symbol: "person.slash", label: jid, sublabel: nil) {
+                            viewModel.unblockJID(jid, on: server)
+                        }
+                    }
+                    ForEach(server.blockedNicks.sorted(), id: \.self) { nick in
+                        BlockedRowIOS(symbol: "number", label: nick, sublabel: "MUC nick") {
+                            viewModel.unblockNick(nick, on: server)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -74,6 +106,38 @@ private struct PreferencesFormBody: View {
             // the in-app double-play, which is a no-op on iOS.
             Toggle("Play notification sound", isOn: $notifications.playSound)
                 .onChange(of: notifications.playSound) { _, _ in notifications.savePreferences() }
+        }
+    }
+}
+
+// MARK: - Blocked row (iOS)
+
+private struct BlockedRowIOS: View {
+    let symbol: String
+    let label: String
+    let sublabel: String?
+    let unblock: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let sublabel {
+                    Text(sublabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("Unblock", action: unblock)
+                .buttonStyle(.borderless)
+                .font(.callout)
         }
     }
 }

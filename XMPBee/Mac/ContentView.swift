@@ -91,7 +91,7 @@ struct ContentView: View {
             ConnectSheet(viewModel: viewModel, editingServer: viewModel.editingServer)
         }
         .sheet(isPresented: $showPreferences) {
-            PreferencesView(notifications: viewModel.notifications)
+            PreferencesView(viewModel: viewModel, notifications: viewModel.notifications)
         }
         .sheet(isPresented: $viewModel.showJoinRoom) {
             if let server = viewModel.selectedServer ?? viewModel.servers.first {

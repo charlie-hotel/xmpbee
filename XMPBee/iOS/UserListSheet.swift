@@ -10,8 +10,14 @@ struct OccupantList: View {
     /// Called after opening a DM from the context menu (lets the iPhone drawer close).
     var onOpenDM: () -> Void = {}
 
+    /// Occupants minus any blocked nicks on the selected server.
+    private var visibleOccupants: [Occupant] {
+        guard let server = viewModel.selectedServer else { return room.occupants }
+        return room.occupants.filter { !server.isBlocked(nick: $0.nick) }
+    }
+
     var body: some View {
-        List(room.occupants) { occupant in
+        List(visibleOccupants) { occupant in
             // Single tap opens the menu (no long-press needed); swipe still copies.
             Menu {
                 Button {
@@ -28,13 +34,15 @@ struct OccupantList: View {
                 } label: {
                     Label("Copy Nickname", systemImage: "doc.on.doc")
                 }
-                Divider()
-                Button(role: .destructive) {
-                    if let server = viewModel.selectedServer {
-                        viewModel.blockNick(occupant.nick, on: server)
+                if occupant.nick != room.nickname {
+                    Divider()
+                    Button(role: .destructive) {
+                        if let server = viewModel.selectedServer {
+                            viewModel.blockNick(occupant.nick, on: server)
+                        }
+                    } label: {
+                        Label("Block \(occupant.displayNick)", systemImage: "person.slash")
                     }
-                } label: {
-                    Label("Block \(occupant.displayNick)", systemImage: "person.slash")
                 }
             } label: {
                 OccupantListRow(occupant: occupant)
@@ -64,6 +72,7 @@ struct OccupantList: View {
 /// glass layer; glass-on-glass is wrong) plus the shared occupant list. Mirrors
 /// `DrawerView`'s structure for the channels drawer.
 struct UsersDrawerContent: View {
+    @EnvironmentObject var viewModel: ChatViewModel
     @ObservedObject var room: Room
     var onClose: () -> Void = {}
 
@@ -75,7 +84,7 @@ struct UsersDrawerContent: View {
                     .font(.title3).fontWeight(.bold)
                     .lineLimit(1)
                 Spacer()
-                Text("\(room.occupants.count)")
+                Text("\(viewModel.visibleOccupantCount(in: room))")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
@@ -94,6 +103,7 @@ struct UsersDrawerContent: View {
 /// iPad users panel: a floating glass header over the occupant list, mirroring the
 /// macOS `UserListView` (always visible beside the chat for non-DM rooms).
 struct OccupantsPanel: View {
+    @EnvironmentObject var viewModel: ChatViewModel
     @ObservedObject var room: Room
 
     var body: some View {
@@ -108,7 +118,7 @@ struct OccupantsPanel: View {
                     .font(.title3).fontWeight(.bold)
                     .foregroundStyle(Theme.channelText)
                 Spacer()
-                Text("\(room.occupants.count)")
+                Text("\(viewModel.visibleOccupantCount(in: room))")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
