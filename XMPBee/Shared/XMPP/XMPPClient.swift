@@ -51,6 +51,7 @@ struct XMPPPresence {
     let affiliation: String?
     let role: String?
     let isSelfPresence: Bool  // status code 110 = our own presence reflected back
+    let errorCondition: String?  // for type="error" MUC presences, e.g. "conflict" (409)
 }
 
 enum XMPPError: Error, LocalizedError {
@@ -1037,10 +1038,28 @@ class XMPPClient: XMLStreamParserDelegate {
             isSelfPresence = statusCodes.contains { $0["code"] == "110" }
         }
 
+        // MUC join errors (e.g. 409 conflict) arrive as type="error" with NO <x muc#user>,
+        // so derive the room/nick from the `from` JID and pull the error condition.
+        var errorCondition: String? = nil
+        if type == "error" {
+            let parts = from.components(separatedBy: "/")
+            if parts.count == 2 {
+                roomJID = parts[0]
+                nick = parts[1]
+            }
+            if let errorEl = pres.child(named: "error") {
+                if errorEl.child(named: "conflict") != nil { errorCondition = "conflict" }
+                else if errorEl.child(named: "forbidden") != nil { errorCondition = "forbidden" }
+                else if errorEl.child(named: "registration-required") != nil { errorCondition = "registration-required" }
+                else if errorEl.child(named: "not-allowed") != nil { errorCondition = "not-allowed" }
+                else { errorCondition = "error" }
+            }
+        }
+
         let presence = XMPPPresence(
             from: from, type: type, show: show, status: status,
             roomJID: roomJID, nick: nick, affiliation: affiliation, role: role,
-            isSelfPresence: isSelfPresence
+            isSelfPresence: isSelfPresence, errorCondition: errorCondition
         )
         delegate?.xmpp(self, didReceivePresence: presence)
     }

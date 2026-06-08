@@ -1359,6 +1359,23 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // exactly the "mirrored DM" bug pattern.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
+        // Not a real occupant message. A "groupchat" with no "/nick" resource is from
+        // the room itself (server announcement / error bounce), and type="error" is a
+        // delivery failure — e.g. sending into a room we never actually joined, which
+        // happens when a nick conflict blocked the join. Don't render either as a
+        // participant message attributed to the bare room JID.
+        guard message.type != "error", parts.count > 1 else {
+            if message.type == "error" {
+                room.messages.append(ChatMessage(
+                    timestamp: Date(), sender: "",
+                    body: "Message could not be delivered to \(room.displayName).",
+                    type: .system, senderColor: .gray
+                ))
+                objectWillChange.send()
+            }
+            return
+        }
+
         // Blocked nick (server-wide for this account): store the message but hide it
         // (views filter it out) and suppress all side effects, so unblock reveals it.
         let blocked = server.isBlocked(nick: nick)
@@ -1460,6 +1477,27 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         guard let roomJID = presence.roomJID, let nick = presence.nick else { return }
         // MUC presence only belongs to actual MUC rooms — never to DM or MUC-PM tabs.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
+
+        // Join failure: the server rejected our presence (most commonly a 409 conflict
+        // when this nick is already in the room — e.g. the same account is joined from
+        // another device). Surface why and drop the half-created room rather than
+        // leaving a phantom "joined" room whose messages silently bounce.
+        if presence.type == "error" {
+            let reason: String
+            switch presence.errorCondition {
+            case "conflict": reason = "the nickname “\(nick)” is already in use there"
+            case "forbidden": reason = "you are banned from that room"
+            case "registration-required": reason = "membership is required to join"
+            case "not-allowed": reason = "the server does not allow joining it"
+            default: reason = "the server rejected the join"
+            }
+            errorMessage = "Couldn’t join \(room.displayName) — \(reason)."
+            showError = true
+            server.rooms.removeAll { $0.id == room.id }
+            if selectedRoom?.id == room.id { selectedRoom = server.rooms.first }
+            objectWillChange.send()
+            return
+        }
 
         // Blocked nick: still track their presence (so unblock can restore them if
         // they're still present) but suppress join/part notifications. The occupant

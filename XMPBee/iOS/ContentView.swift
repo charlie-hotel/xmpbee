@@ -38,6 +38,9 @@ struct ContentView: View {
             UserSearchScreen()
                 .environmentObject(viewModel)
         }
+        .alert(viewModel.errorMessage, isPresented: $viewModel.showError) {
+            Button("OK") {}
+        }
         .onAppear {
             if viewModel.servers.isEmpty {
                 viewModel.loadAndReconnect()
