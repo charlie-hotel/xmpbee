@@ -48,7 +48,7 @@ struct ConnectSheet: View {
                             .font(.system(size: 13))
                             .textFieldStyle(.roundedBorder)
                     }
-                    field("Nickname:", text: $nickname, placeholder: "mynick")
+                    field("Nickname:", text: $nickname, placeholder: "mynick (must be unique per-device!)")
                 }
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading)

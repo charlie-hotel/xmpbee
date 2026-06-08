@@ -50,7 +50,7 @@ struct ConnectScreen: View {
                     SecureField("Password", text: $password)
                         .accessibilityLabel("Password")
 
-                    TextField("Display nickname", text: $nickname)
+                    TextField("Display nickname (must be unique per-device!)", text: $nickname)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityLabel("Nickname")
