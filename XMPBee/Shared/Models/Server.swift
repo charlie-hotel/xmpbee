@@ -3,15 +3,31 @@ import Foundation
 import UIKit
 #endif
 
-/// Per-platform default XMPP resource, so multiple simultaneously-connected clients
-/// don't share a resource and fight over the connection.
+/// Per-platform default XMPP resource with a short per-install suffix, so multiple
+/// clients — even two installs on the same platform/account — bind distinct full JIDs
+/// instead of displacing each other.
 enum Platform {
+    private static let resourceSuffixKey = "xmpbeeResourceSuffix"
+
+    /// A 3-char id generated once per install and persisted, so this client keeps a
+    /// stable resource across reconnects while staying unique against other installs.
+    private static var installSuffix: String {
+        if let existing = UserDefaults.standard.string(forKey: resourceSuffixKey) {
+            return existing
+        }
+        let alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+        let suffix = String((0..<3).compactMap { _ in alphabet.randomElement() })
+        UserDefaults.standard.set(suffix, forKey: resourceSuffixKey)
+        return suffix
+    }
+
     static var defaultResource: String {
         #if os(macOS)
-        "XMPBee-macOS"
+        let platform = "XMPBee-macOS"
         #else
-        UIDevice.current.userInterfaceIdiom == .pad ? "XMPBee-iPad" : "XMPBee-iPhone"
+        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "XMPBee-iPad" : "XMPBee-iPhone"
         #endif
+        return "\(platform)-\(installSuffix)"
     }
 }
 
