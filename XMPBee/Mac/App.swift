@@ -1,8 +1,19 @@
 import SwiftUI
 
+#if canImport(Sparkle)
+import Sparkle
+import Combine
+#endif
+
 @main
 struct XMPBeeApp: App {
     @Environment(\.openWindow) private var openWindow
+
+    #if canImport(Sparkle)
+    // Sparkle auto-updater — only present in the Developer ID (GitHub) build, which
+    // links Sparkle. The Mac App Store target doesn't link it, so canImport is false.
+    private let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    #endif
 
     var body: some Scene {
         Window("XMPBee", id: "main") {
@@ -11,6 +22,12 @@ struct XMPBeeApp: App {
         .windowStyle(.automatic)
         .defaultSize(width: 1000, height: 650)
         .commands {
+            #if canImport(Sparkle)
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: updaterController.updater)
+            }
+            #endif
+
             // Replace File → New Window (⌘N) with New DM
             CommandGroup(replacing: .newItem) {
                 Button("New Direct Message") {
@@ -60,6 +77,35 @@ struct XMPBeeApp: App {
         .keyboardShortcut("l", modifiers: [.shift, .command])
     }
 }
+
+#if canImport(Sparkle)
+// MARK: - Check for Updates menu item
+
+/// Tracks the updater's `canCheckForUpdates` so the menu item disables itself while
+/// a check is already in flight. (Sparkle's recommended SwiftUI pattern.)
+private final class CheckForUpdatesViewModel: ObservableObject {
+    @Published var canCheckForUpdates = false
+
+    init(updater: SPUUpdater) {
+        updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheckForUpdates)
+    }
+}
+
+private struct CheckForUpdatesView: View {
+    @ObservedObject private var viewModel: CheckForUpdatesViewModel
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        self.viewModel = CheckForUpdatesViewModel(updater: updater)
+    }
+
+    var body: some View {
+        Button("Check for Updates…", action: updater.checkForUpdates)
+            .disabled(!viewModel.canCheckForUpdates)
+    }
+}
+#endif
 
 // MARK: - Command Notifications
 

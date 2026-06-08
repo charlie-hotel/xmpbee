@@ -8,13 +8,26 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build:
     runs-on: macos-26
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_ENV"
+          fi
 
       - name: Import signing certificate
         env:
@@ -45,6 +58,8 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM=AC7AGP27GM \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$VERSION" \
             OTHER_CODE_SIGN_FLAGS="--timestamp"
 
       - name: Export signed app
@@ -130,3 +145,50 @@ jobs:
         with:
           files: build/XMPBee-${{ github.ref_name }}.zip
           generate_release_notes: true
+
+      - name: Sign update and build appcast
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          ZIP="build/XMPBee-${{ github.ref_name }}.zip"
+          SIGN_UPDATE="$(find ~/Library/Developer/Xcode/DerivedData -name sign_update -path '*sparkle*' -type f | head -1)"
+          if [ -z "$SIGN_UPDATE" ]; then echo "sign_update not found in resolved Sparkle artifacts"; exit 1; fi
+
+          KEY_FILE="$RUNNER_TEMP/sparkle_key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          SIG_ATTRS="$("$SIGN_UPDATE" --ed-key-file "$KEY_FILE" "$ZIP")"
+          rm -f "$KEY_FILE"
+
+          URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/XMPBee-${{ github.ref_name }}.zip"
+          PUBDATE="$(date -u +'%a, %d %b %Y %H:%M:%S +0000')"
+
+          mkdir -p _site
+          cat > _site/appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+          <channel>
+          <title>XMPBee</title>
+          <item>
+          <title>Version ${VERSION}</title>
+          <pubDate>${PUBDATE}</pubDate>
+          <sparkle:version>${VERSION}</sparkle:version>
+          <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+          <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+          <enclosure url="${URL}" type="application/octet-stream" ${SIG_ATTRS} />
+          </item>
+          </channel>
+          </rss>
+          EOF
+          echo "Generated appcast.xml:"; cat _site/appcast.xml
+
+      - name: Upload Pages artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy appcast to GitHub Pages
+        id: deployment
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/deploy-pages@v4

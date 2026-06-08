@@ -10,6 +10,31 @@
 		015B78177AA2B59AF79E712D /* Shared/Views/URLOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113A5C03CF086AC03BCF1EB6 /* Shared/Views/URLOpener.swift */; };
 		04462CF422D26C2E5F77576C /* Mac/PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF7BE0B2E64133E9B60F5A86 /* Mac/PreferencesView.swift */; };
 		0F380E6C2F42B3B2008885DE /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0F380E6B2F42B3B2008885DE /* AppIcon.icon */; };
+		0F4B20AE2FD6CE8A00ECCAB5 /* Shared/Services/LogManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD151412F43E883000034D0 /* Shared/Services/LogManager.swift */; };
+		0F4B20AF2FD6CE8A00ECCAB5 /* Mac/App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67FC88E1F5F55E4454A147CC /* Mac/App.swift */; };
+		0F4B20B02FD6CE8A00ECCAB5 /* Shared/Models/ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54665C0CB84793271C66FC59 /* Shared/Models/ChatMessage.swift */; };
+		0F4B20B12FD6CE8A00ECCAB5 /* Shared/Models/NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC8AF7C97331C3741956814 /* Shared/Models/NotificationManager.swift */; };
+		0F4B20B22FD6CE8A00ECCAB5 /* Shared/Models/Occupant.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFF3A07D8A706087B8225B5 /* Shared/Models/Occupant.swift */; };
+		0F4B20B32FD6CE8A00ECCAB5 /* Shared/Models/Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = A323A13FD5A83507F3E0506A /* Shared/Models/Room.swift */; };
+		0F4B20B42FD6CE8A00ECCAB5 /* Shared/Models/Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D9F35C43F93C00196950A4F /* Shared/Models/Server.swift */; };
+		0F4B20B52FD6CE8A00ECCAB5 /* Shared/ViewModels/ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61A58899A3909B86718AD240 /* Shared/ViewModels/ChatViewModel.swift */; };
+		0F4B20B62FD6CE8A00ECCAB5 /* Mac/ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 271EA52E00E9179F1DA35CD0 /* Mac/ChatView.swift */; };
+		0F4B20B72FD6CE8A00ECCAB5 /* Mac/LogViewerWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD151442F43E898000034D0 /* Mac/LogViewerWindow.swift */; };
+		0F4B20B82FD6CE8A00ECCAB5 /* Mac/ConnectSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A842DBEA6EF17024161697 /* Mac/ConnectSheet.swift */; };
+		0F4B20B92FD6CE8A00ECCAB5 /* Mac/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1019A4D8B494F01949B4B88 /* Mac/ContentView.swift */; };
+		0F4B20BA2FD6CE8A00ECCAB5 /* Mac/PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF7BE0B2E64133E9B60F5A86 /* Mac/PreferencesView.swift */; };
+		0F4B20BB2FD6CE8A00ECCAB5 /* Mac/SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DE71832A783514D75CF195 /* Mac/SidebarView.swift */; };
+		0F4B20BC2FD6CE8A00ECCAB5 /* Shared/Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AAAD73703917FFEF47A9750 /* Shared/Theme.swift */; };
+		0F4B20BD2FD6CE8A00ECCAB5 /* Mac/UserListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1383A091CAAC2D6CB75DA06 /* Mac/UserListView.swift */; };
+		0F4B20BE2FD6CE8A00ECCAB5 /* Shared/XMPP/XMLStreamParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E94BDDE65186F193474DB42 /* Shared/XMPP/XMLStreamParser.swift */; };
+		0F4B20BF2FD6CE8A00ECCAB5 /* Shared/XMPP/XMPPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5374D069EF13B12D358B38E3 /* Shared/XMPP/XMPPClient.swift */; };
+		0F4B20C02FD6CE8A00ECCAB5 /* Shared/XMPP/XMPPConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3991762B85D949DCEBB09A12 /* Shared/XMPP/XMPPConnection.swift */; };
+		0F4B20C12FD6CE8A00ECCAB5 /* Shared/Views/MessageAttributedStringBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C951EC7CDBEC7D212D3410A7 /* Shared/Views/MessageAttributedStringBuilder.swift */; };
+		0F4B20C22FD6CE8A00ECCAB5 /* Shared/Views/Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F8F1B1EE047278C478BD1D2 /* Shared/Views/Clipboard.swift */; };
+		0F4B20C32FD6CE8A00ECCAB5 /* Shared/Views/URLOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113A5C03CF086AC03BCF1EB6 /* Shared/Views/URLOpener.swift */; };
+		0F4B20C52FD6CE8A00ECCAB5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A92EAB1420B7D78C481B5C6B /* Assets.xcassets */; };
+		0F4B20C62FD6CE8A00ECCAB5 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0F380E6B2F42B3B2008885DE /* AppIcon.icon */; };
+		0F4B20CF2FD6D1D300ECCAB5 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0F4B20CE2FD6D1D300ECCAB5 /* Sparkle */; };
 		0FD151432F43E883000034D0 /* Shared/Services/LogManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD151412F43E883000034D0 /* Shared/Services/LogManager.swift */; };
 		0FD151452F43E898000034D0 /* Mac/LogViewerWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD151442F43E898000034D0 /* Mac/LogViewerWindow.swift */; };
 		11EEBD2E397FCA419B175123 /* Shared/XMPP/XMPPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5374D069EF13B12D358B38E3 /* Shared/XMPP/XMPPClient.swift */; };
@@ -65,6 +90,8 @@
 /* Begin PBXFileReference section */
 		0E94BDDE65186F193474DB42 /* Shared/XMPP/XMLStreamParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/XMPP/XMLStreamParser.swift; sourceTree = "<group>"; };
 		0F380E6B2F42B3B2008885DE /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		0F4B20CB2FD6CE8A00ECCAB5 /* XMPBee Desktop (MAS).app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "XMPBee Desktop (MAS).app"; path = XMPBee.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0F4B20CC2FD6CE8A00ECCAB5 /* XMPBee/Mac/Info-MAS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "XMPBee/Mac/Info-MAS.plist"; sourceTree = SOURCE_ROOT; };
 		0FD151412F43E883000034D0 /* Shared/Services/LogManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Services/LogManager.swift; sourceTree = "<group>"; };
 		0FD151442F43E898000034D0 /* Mac/LogViewerWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/LogViewerWindow.swift; sourceTree = "<group>"; };
 		113A5C03CF086AC03BCF1EB6 /* Shared/Views/URLOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Views/URLOpener.swift; sourceTree = "<group>"; };
@@ -82,7 +109,7 @@
 		5AAAD73703917FFEF47A9750 /* Shared/Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Theme.swift; sourceTree = "<group>"; };
 		61A58899A3909B86718AD240 /* Shared/ViewModels/ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/ViewModels/ChatViewModel.swift; sourceTree = "<group>"; };
 		67FC88E1F5F55E4454A147CC /* Mac/App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/App.swift; sourceTree = "<group>"; };
-		68EB88AED944282D28F9C42C /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "XMPBee.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68EB88AED944282D28F9C42C /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = XMPBee.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D9F35C43F93C00196950A4F /* Shared/Models/Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Models/Server.swift; sourceTree = "<group>"; };
 		92A0B740C025128D88CFB205 /* iOS/ChatPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/ChatPaneView.swift; sourceTree = "<group>"; };
 		A1019A4D8B494F01949B4B88 /* Mac/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/ContentView.swift; sourceTree = "<group>"; };
@@ -92,7 +119,7 @@
 		B5000000000000000000BB02 /* iOS/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/ContentView.swift; sourceTree = "<group>"; };
 		B5000000000000000000BB03 /* iOS/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = iOS/Info.plist; sourceTree = "<group>"; };
 		B5000000000000000000BB04 /* iOS/XMPBee-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS/XMPBee-iOS.entitlements"; sourceTree = "<group>"; };
-		B5000000000000000000BB05 /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "XMPBee.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B5000000000000000000BB05 /* XMPBee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = XMPBee.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B5C3F1A200000000000001B6 /* iOS/DrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/DrawerView.swift; sourceTree = "<group>"; };
 		B5C3F1A200000000000001B7 /* iOS/iPadSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/iPadSplitView.swift; sourceTree = "<group>"; };
 		C1000000000000000000BB01 /* iOS/JoinRoomScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/JoinRoomScreen.swift; sourceTree = "<group>"; };
@@ -109,6 +136,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0F4B20C72FD6CE8A00ECCAB5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B5000000000000000000CC02 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -120,6 +154,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0F4B20CF2FD6D1D300ECCAB5 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -164,6 +199,7 @@
 			isa = PBXGroup;
 			children = (
 				334C4933B4BE7058377D4F44 /* XMPBee */,
+				0F4B20CC2FD6CE8A00ECCAB5 /* XMPBee/Mac/Info-MAS.plist */,
 				77CCCA5AE2D32BB65CB73519 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -173,6 +209,7 @@
 			children = (
 				68EB88AED944282D28F9C42C /* XMPBee.app */,
 				B5000000000000000000BB05 /* XMPBee.app */,
+				0F4B20CB2FD6CE8A00ECCAB5 /* XMPBee Desktop (MAS).app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -242,6 +279,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0F4B20AC2FD6CE8A00ECCAB5 /* XMPBee Desktop (MAS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0F4B20C82FD6CE8A00ECCAB5 /* Build configuration list for PBXNativeTarget "XMPBee Desktop (MAS)" */;
+			buildPhases = (
+				0F4B20AD2FD6CE8A00ECCAB5 /* Sources */,
+				0F4B20C42FD6CE8A00ECCAB5 /* Resources */,
+				0F4B20C72FD6CE8A00ECCAB5 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "XMPBee Desktop (MAS)";
+			productName = XMPBee;
+			productReference = 0F4B20CB2FD6CE8A00ECCAB5 /* XMPBee Desktop (MAS).app */;
+			productType = "com.apple.product-type.application";
+		};
 		B5000000000000000000DD01 /* XMPBee Mobile */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B5000000000000000000DD02 /* Build configuration list for PBXNativeTarget "XMPBee Mobile" */;
@@ -294,17 +348,30 @@
 				Base,
 			);
 			mainGroup = 43F44E7F206A6F696F95D962;
+			packageReferences = (
+				0F4B20CD2FD6D1D300ECCAB5 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			productRefGroup = 77CCCA5AE2D32BB65CB73519 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				EEFA3E70D98A0F966999694F /* XMPBee Desktop */,
 				B5000000000000000000DD01 /* XMPBee Mobile */,
+				0F4B20AC2FD6CE8A00ECCAB5 /* XMPBee Desktop (MAS) */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0F4B20C42FD6CE8A00ECCAB5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0F4B20C52FD6CE8A00ECCAB5 /* Assets.xcassets in Resources */,
+				0F4B20C62FD6CE8A00ECCAB5 /* AppIcon.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B5000000000000000000CC03 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -326,6 +393,35 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0F4B20AD2FD6CE8A00ECCAB5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0F4B20AE2FD6CE8A00ECCAB5 /* Shared/Services/LogManager.swift in Sources */,
+				0F4B20AF2FD6CE8A00ECCAB5 /* Mac/App.swift in Sources */,
+				0F4B20B02FD6CE8A00ECCAB5 /* Shared/Models/ChatMessage.swift in Sources */,
+				0F4B20B12FD6CE8A00ECCAB5 /* Shared/Models/NotificationManager.swift in Sources */,
+				0F4B20B22FD6CE8A00ECCAB5 /* Shared/Models/Occupant.swift in Sources */,
+				0F4B20B32FD6CE8A00ECCAB5 /* Shared/Models/Room.swift in Sources */,
+				0F4B20B42FD6CE8A00ECCAB5 /* Shared/Models/Server.swift in Sources */,
+				0F4B20B52FD6CE8A00ECCAB5 /* Shared/ViewModels/ChatViewModel.swift in Sources */,
+				0F4B20B62FD6CE8A00ECCAB5 /* Mac/ChatView.swift in Sources */,
+				0F4B20B72FD6CE8A00ECCAB5 /* Mac/LogViewerWindow.swift in Sources */,
+				0F4B20B82FD6CE8A00ECCAB5 /* Mac/ConnectSheet.swift in Sources */,
+				0F4B20B92FD6CE8A00ECCAB5 /* Mac/ContentView.swift in Sources */,
+				0F4B20BA2FD6CE8A00ECCAB5 /* Mac/PreferencesView.swift in Sources */,
+				0F4B20BB2FD6CE8A00ECCAB5 /* Mac/SidebarView.swift in Sources */,
+				0F4B20BC2FD6CE8A00ECCAB5 /* Shared/Theme.swift in Sources */,
+				0F4B20BD2FD6CE8A00ECCAB5 /* Mac/UserListView.swift in Sources */,
+				0F4B20BE2FD6CE8A00ECCAB5 /* Shared/XMPP/XMLStreamParser.swift in Sources */,
+				0F4B20BF2FD6CE8A00ECCAB5 /* Shared/XMPP/XMPPClient.swift in Sources */,
+				0F4B20C02FD6CE8A00ECCAB5 /* Shared/XMPP/XMPPConnection.swift in Sources */,
+				0F4B20C12FD6CE8A00ECCAB5 /* Shared/Views/MessageAttributedStringBuilder.swift in Sources */,
+				0F4B20C22FD6CE8A00ECCAB5 /* Shared/Views/Clipboard.swift in Sources */,
+				0F4B20C32FD6CE8A00ECCAB5 /* Shared/Views/URLOpener.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B5000000000000000000CC01 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -420,6 +516,96 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = XMPBee/Mac/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = XMPBee;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app;
+				PRODUCT_NAME = XMPBee;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		0F4B20C92FD6CE8A00ECCAB5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = "XMPBee/Mac/XMPBee-MAS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "XMPBee/Mac/Info-MAS.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = XMPBee;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xmpbee.app;
+				PRODUCT_NAME = XMPBee;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		0F4B20CA2FD6CE8A00ECCAB5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				AUTOMATION_APPLE_EVENTS = NO;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = "XMPBee/Mac/XMPBee-MAS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "XMPBee/Mac/Info-MAS.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = XMPBee;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -645,6 +831,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0F4B20C82FD6CE8A00ECCAB5 /* Build configuration list for PBXNativeTarget "XMPBee Desktop (MAS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0F4B20C92FD6CE8A00ECCAB5 /* Debug */,
+				0F4B20CA2FD6CE8A00ECCAB5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		B5000000000000000000DD02 /* Build configuration list for PBXNativeTarget "XMPBee Mobile" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -673,6 +868,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0F4B20CD2FD6D1D300ECCAB5 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0F4B20CE2FD6D1D300ECCAB5 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0F4B20CD2FD6D1D300ECCAB5 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5E729DA68670304DF4633F25 /* Project object */;
 }
