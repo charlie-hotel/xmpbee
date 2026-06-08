@@ -1,7 +1,7 @@
 {
   "fill" : {
     "linear-gradient" : [
-      "display-p3:0.79035,0.87700,0.88437,1.00000",
+      "display-p3:0.61963,0.88437,0.83443,1.00000",
       "display-p3:0.96783,0.91597,0.45592,1.00000"
     ],
     "orientation" : {
@@ -19,6 +19,21 @@
     {
       "layers" : [
         {
+          "fill" : {
+            "solid" : "display-p3:0.96783,0.86108,0.46907,1.00000"
+          },
+          "image-name" : "bumble-bee white.svg",
+          "name" : "bumble-bee white",
+          "position" : {
+            "scale" : 0.73,
+            "translation-in-points" : [
+              -26.466196416738512,
+              1.7599120888396556
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
           "glass" : true,
           "hidden" : false,
           "image-name" : "bumble-bee.svg",
