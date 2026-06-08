@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,26 +16,117 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build archive
+      - name: Import signing certificate
+        env:
+          SIGNING_CERT: ${{ secrets.SIGNING_CERT }}
+          SIGNING_CERT_PASS: ${{ secrets.SIGNING_CERT_PASS }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -base64 24)"
+          echo "::add-mask::$KEYCHAIN_PASS"
+          echo "$SIGNING_CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" -P "$SIGNING_CERT_PASS" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed s/\"//g)
+
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Build signed archive
         run: |
           xcodebuild archive \
             -project XMPBee.xcodeproj \
             -scheme "XMPBee Desktop" \
             -configuration Release \
-            -archivePath build/XMPBee.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            -archivePath "$RUNNER_TEMP/XMPBee.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM=AC7AGP27GM \
+            OTHER_CODE_SIGN_FLAGS="--timestamp"
+
+      - name: Export signed app
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/XMPBee.xcarchive" \
+            -exportOptionsPlist .github/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export"
+
+      - name: Notarize and staple
+        env:
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.ASC_ISSUER }}
+        run: |
+          APP="$RUNNER_TEMP/export/XMPBee.app"
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_API_KEY" | base64 --decode > "$KEY_PATH"
+
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+
+          # Submit, capture the (non-secret) submission id, then wait separately so
+          # the id is on disk for the failure-log step even if `wait` reports Invalid.
+          SUBMISSION_ID="$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER" \
+            --output-format json \
+            | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')"
+          echo "$SUBMISSION_ID" > "$RUNNER_TEMP/submission_id.txt"
+          echo "Notarization submission id: $SUBMISSION_ID"
+
+          xcrun notarytool wait "$SUBMISSION_ID" \
+            --key "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER"
+
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess -vvv --type execute "$APP"
+
+          rm "$KEY_PATH"
+
+      - name: Dump notarization log on failure
+        if: failure()
+        env:
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.ASC_ISSUER }}
+        run: |
+          ID_FILE="$RUNNER_TEMP/submission_id.txt"
+          if [ ! -s "$ID_FILE" ]; then
+            echo "No notarization submission was made; nothing to log."
+            exit 0
+          fi
+          SUBMISSION_ID="$(cat "$ID_FILE")"
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_API_KEY" | base64 --decode > "$KEY_PATH"
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --key "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER" || true
+          rm -f "$KEY_PATH"
 
       - name: Package app
         run: |
-          cp -R build/XMPBee.xcarchive/Products/Applications/XMPBee.app build/XMPBee.app
-          cd build
-          ditto -c -k --sequesterRsrc --keepParent XMPBee.app XMPBee-${{ github.ref_name }}.zip
+          mkdir -p build
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/export/XMPBee.app" build/XMPBee.zip
 
-      - name: Create release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XMPBee-macOS
+          path: build/XMPBee.zip
+
+      - name: Name versioned release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        run: cp build/XMPBee.zip "build/XMPBee-${{ github.ref_name }}.zip"
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: build/XMPBee-${{ github.ref_name }}.zip
           generate_release_notes: true
-
