@@ -12,7 +12,7 @@ I too am an AI skeptic, so yeah, I realise the irony of putting out a vibecoded 
 - Correct political-ideological orientation toward open protocols
 
 # Build
-Open it in xcode and press the button. Am I signing it ever? probably not lol
+Open it in xcode and press the button. Am I signing it ever? yes! releases on this repo are signed and don't require xattr messing to launch
 
 # Features
 - It's a native mac application. It only uses around 80-200mb of RAM.
