@@ -44,6 +44,13 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
     private let maxReconnectionAttempts = 5
     private var manuallyDisconnected: Set<UUID> = []
 
+    /// MUC membership watchdog (XEP-0410 self-ping). One app-wide repeating sweep;
+    /// per-room rejoin cooldown is the primary defense against rejoin loops.
+    private var mucSelfPingTimer: Timer?
+    private var mucRejoinCooldown: [UUID: Date] = [:]
+    private static let mucSelfPingInterval: TimeInterval = 300
+    private static let mucRejoinCooldownInterval: TimeInterval = 600
+
     /// iOS app-lifecycle reconnect intent.  When the app is backgrounded we close
     /// sockets cleanly but record (per-server) that we WANT to be connected again
     /// once foregrounded.  This is deliberately distinct from `manuallyDisconnected`
@@ -70,6 +77,70 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         case failed
     }
     @Published var reconnectStatus: [UUID: ReconnectUIState] = [:]
+
+    init() {
+        startMUCSelfPingWatchdog()
+    }
+
+    // MARK: - MUC Membership Watchdog (XEP-0410)
+
+    /// Periodically self-ping every joined MUC to detect the server having silently
+    /// dropped us as an occupant (the connection itself can stay healthy — DMs and
+    /// keepalive pings keep flowing — so the c2s keepalive never notices).
+    ///
+    /// Rejoin-loop defenses, layered:
+    ///   • only a definitive <not-acceptable/> triggers a rejoin (timeouts fire no
+    ///     callback at all; other errors are inconclusive no-ops)
+    ///   • per-room cooldown: at most one auto-rejoin per `mucRejoinCooldownInterval`
+    ///   • rooms mid-join (`initialPresenceComplete == false`) are never pinged, so a
+    ///     rejoin in flight can't be re-triggered
+    private func startMUCSelfPingWatchdog() {
+        mucSelfPingTimer = Timer.scheduledTimer(withTimeInterval: Self.mucSelfPingInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sweepMUCMemberships() }
+        }
+    }
+
+    private func sweepMUCMemberships() {
+        for server in servers where server.isConnected {
+            guard let client = clients[server.id] else { continue }
+            let rooms = server.rooms.filter { !$0.isDM && !$0.jid.isEmpty && $0.initialPresenceComplete }
+            for (index, room) in rooms.enumerated() {
+                let roomID = room.id
+                let roomJID = room.jid
+                let nick = room.nickname
+                // Stagger so N rooms don't burst N IQs at once.
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 2.0) { [weak self, weak server, weak client] in
+                    guard let self, let server, let client, server.isConnected else { return }
+                    client.pingOccupant(roomJID: roomJID, nick: nick) { [weak self, weak server, weak client] result in
+                        guard result == .notJoined, let self, let server, let client else { return }
+                        Task { @MainActor in
+                            self.rejoinDroppedMUC(roomID: roomID, server: server, client: client)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func rejoinDroppedMUC(roomID: UUID, server: Server, client: XMPPClient) {
+        guard server.isConnected,
+              let room = server.rooms.first(where: { $0.id == roomID }),
+              !room.isDM, room.initialPresenceComplete else { return }
+        if let last = mucRejoinCooldown[roomID],
+           Date().timeIntervalSince(last) < Self.mucRejoinCooldownInterval { return }
+        mucRejoinCooldown[roomID] = Date()
+
+        room.messages.append(ChatMessage(
+            timestamp: Date(), sender: "",
+            body: "Server dropped us from \(room.displayName), rejoining...",
+            type: .system, senderColor: .gray
+        ))
+        room.initialPresenceComplete = false
+        room.pendingOccupants = []
+        room.occupants = []
+        client.joinRoom(jid: room.jid, nickname: room.nickname)
+        objectWillChange.send()
+    }
 
     // MARK: - Server Management
 
@@ -1491,7 +1562,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             case "not-allowed": reason = "the server does not allow joining it"
             default: reason = "the server rejected the join"
             }
-            errorMessage = "Couldn’t join \(room.displayName) — \(reason)."
+            errorMessage = "Couldn’t join \(room.displayName): \(reason)."
             showError = true
             server.rooms.removeAll { $0.id == room.id }
             if selectedRoom?.id == room.id { selectedRoom = server.rooms.first }

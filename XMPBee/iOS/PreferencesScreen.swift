@@ -58,7 +58,7 @@ private struct PreferencesFormBody: View {
             }
         } else {
             ForEach(accounts) { server in
-                Section("Blocked · \(server.name)") {
+                Section("Blocked - \(server.name)") {
                     ForEach(server.blockedJIDs.sorted(), id: \.self) { jid in
                         BlockedRowIOS(symbol: "person.slash", label: jid, sublabel: nil) {
                             viewModel.unblockJID(jid, on: server)

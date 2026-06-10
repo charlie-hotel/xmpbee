@@ -156,7 +156,7 @@ struct ChatView: View {
                     }
 
                     if !isBlockedDM && !room.topic.isEmpty && !topicHovered {
-                        Text("—")
+                        Text("-")
                             .foregroundStyle(.tertiary)
                         Text(room.topic)
                             .font(Theme.monoFontSmall)
@@ -212,7 +212,7 @@ struct ChatView: View {
             }
 
             TextField(
-                canSendMessage ? "Type a message..." : "Disconnected — waiting to reconnect",
+                canSendMessage ? "Type a message..." : "Disconnected, waiting to reconnect",
                 text: $viewModel.inputText
             )
                 .font(Theme.monoFont)

@@ -322,8 +322,8 @@ private struct ComposerView: View {
         guard let server = viewModel.selectedServer else { return "Not connected" }
         switch viewModel.reconnectStatus[server.id] {
         case .attempting: return "Reconnecting…"
-        case .failed:     return "Disconnected — tap Retry to reconnect"
-        case nil:         return "Disconnected — waiting to reconnect"
+        case .failed:     return "Disconnected, tap Retry to reconnect"
+        case nil:         return "Disconnected, waiting to reconnect"
         }
     }
 

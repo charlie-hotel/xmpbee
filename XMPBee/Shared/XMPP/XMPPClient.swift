@@ -54,6 +54,14 @@ struct XMPPPresence {
     let errorCondition: String?  // for type="error" MUC presences, e.g. "conflict" (409)
 }
 
+/// Outcome of a XEP-0410 MUC self-ping. `inconclusive` covers every ambiguous
+/// error; timeouts never call back at all. Only `notJoined` may drive a rejoin.
+enum MUCSelfPingResult {
+    case joined
+    case notJoined
+    case inconclusive
+}
+
 enum XMPPError: Error, LocalizedError {
     case connectionFailed(String)
     case authenticationFailed(String)
@@ -166,6 +174,7 @@ class XMPPClient: XMLStreamParserDelegate {
         self.domain = jid.components(separatedBy: "@").last ?? host
         self.tlsNegotiated = false
         self.startTLSPending = false
+        self.joinedOccupantJIDs = []  // fresh session — rooms re-register via joinRoom
 
         connection = XMPPConnection(host: host, port: port, securityMode: securityMode)
         // The fast-path ping responder uses this to reject pings that don't come
@@ -500,12 +509,57 @@ class XMPPClient: XMLStreamParserDelegate {
         <history maxstanzas='\(historyMaxStanzas)'/>\
         </x></presence>
         """
+        joinedOccupantJIDs.insert(Self.occupantKey(roomJID: roomJID, nick: nickname))
         connection?.send(presence)
     }
 
     func leaveRoom(jid roomJID: String, nickname: String) {
         let presence = "<presence to='\(roomJID.xmlEscaped)/\(nickname.xmlEscaped)' type='unavailable'/>"
+        joinedOccupantJIDs.remove(Self.occupantKey(roomJID: roomJID, nick: nickname))
         connection?.send(presence)
+    }
+
+    // MARK: - MUC Self-Ping (XEP-0410)
+
+    /// Ping our own occupant JID to verify we are still joined to a room. On servers
+    /// with the self-ping optimization the MUC service answers authoritatively; on
+    /// others the ping is routed back to this client, which answers it via the
+    /// occupant allow-list in `handleIQ`. A timeout fires NO completion (the pending
+    /// IQ is silently swept) — deliberately inconclusive, never a rejoin trigger.
+    func pingOccupant(roomJID: String, nick: String, completion: @escaping (MUCSelfPingResult) -> Void) {
+        let occupantJID = "\(roomJID)/\(nick)"
+        let id = nextIQId()
+        let iq = "<iq to='\(occupantJID.xmlEscaped)' type='get' id='\(id.xmlEscaped)'><ping xmlns='urn:xmpp:ping'/></iq>"
+        registerPendingIQ(id: id, expectedFrom: occupantJID) { stanza in
+            if stanza["type"] == "result" {
+                completion(.joined)
+            } else if let error = stanza.child(named: "error"), error.child(named: "not-acceptable") != nil {
+                // XEP-0410: <not-acceptable/> is the one DEFINITIVE "you are not an
+                // occupant" signal. All other errors are ambiguous (old servers,
+                // s2s hiccups) and must not trigger a rejoin.
+                completion(.notJoined)
+            } else {
+                completion(.inconclusive)
+            }
+        }
+        connection?.send(iq)
+    }
+
+    /// Full occupant JIDs of rooms we have joined this session, normalized for
+    /// matching (bare JID lowercased; nick kept case-sensitive per resourcepart
+    /// rules). Lets `handleIQ` answer reflected self-pings without opening the
+    /// pong allow-list to arbitrary peers.
+    private var joinedOccupantJIDs: Set<String> = []
+
+    private static func occupantKey(roomJID: String, nick: String) -> String {
+        "\(roomJID.lowercased())/\(nick)"
+    }
+
+    private func isOwnOccupantJID(_ from: String) -> Bool {
+        guard let slash = from.firstIndex(of: "/") else { return false }
+        let bare = String(from[from.startIndex..<slash]).lowercased()
+        let nick = String(from[from.index(after: slash)...])
+        return joinedOccupantJIDs.contains("\(bare)/\(nick)")
     }
 
     func requestRoomList(from service: String, completion: @escaping ([(jid: String, name: String)]) -> Void) {
@@ -912,8 +966,11 @@ class XMPPClient: XMLStreamParserDelegate {
         // or our own JID — the same allow-list `isValidIQResponseFrom` uses). We never pong
         // arbitrary peers; that would leak online status. A duplicate-id result (fast path +
         // here) is harmless — the server ignores it.
+        // `isOwnOccupantJID` admits our own reflected XEP-0410 self-pings (a MUC
+        // without the self-ping optimization routes them back to us); still no
+        // pong for arbitrary peers.
         if type == "get", iq.child(named: "ping") != nil {
-            if from.isEmpty || from == domain || from == jid || from.hasPrefix(jid + "/") {
+            if from.isEmpty || from == domain || from == jid || from.hasPrefix(jid + "/") || isOwnOccupantJID(from) {
                 let pong = from.isEmpty
                     ? "<iq type='result' id='\(id.xmlEscaped)'/>"
                     : "<iq type='result' id='\(id.xmlEscaped)' to='\(from.xmlEscaped)'/>"

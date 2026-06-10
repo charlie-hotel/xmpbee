@@ -266,13 +266,13 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
 
         if mentionsMe && notifyOnMention {
             sendNotification(
-                title: "\(room) — \(sender) mentioned you",
+                title: "\(room) - \(sender) mentioned you",
                 body: body, category: "XMPP_MESSAGE",
                 sound: playSound, threadId: room
             )
         } else if notifyOnMessage {
             sendNotification(
-                title: "\(room) — \(sender)",
+                title: "\(room) - \(sender)",
                 body: body, category: "XMPP_MESSAGE",
                 sound: playSound, threadId: room
             )
