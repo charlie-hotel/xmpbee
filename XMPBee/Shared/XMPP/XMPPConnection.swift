@@ -106,10 +106,11 @@ class XMPPConnection: NSObject, StreamDelegate {
 
     func send(_ string: String) {
         guard let data = string.data(using: .utf8) else { return }
-        // Security: Track activity time for idle timeout
-        lastActivityTime = Date()
         performOnStreamThread { [weak self] in
             guard let self = self else { return }
+            // lastActivityTime is confined to the stream thread (also written by the
+            // hasBytesAvailable handler) — bump it here, not on the caller's thread.
+            self.lastActivityTime = Date()
             self.writeBuffer.append(data)
             self.flushWriteBuffer()
         }
@@ -290,13 +291,13 @@ class XMPPConnection: NSObject, StreamDelegate {
 
         // Build pong response.  We always include `to=fromAttr` because we've
         // already confirmed the source is the legitimate server JID.
+        // Goes through writeBuffer (we're already on the stream thread), never the
+        // raw stream: a direct write could interleave into the middle of a stanza
+        // whose unwritten tail is still sitting in writeBuffer after a partial flush.
         let pong = "<iq type='result' id='\(id.xmlEscaped)' to='\(fromAttr.xmlEscaped)'/>"
-        guard let output = outputStream, let data = pong.data(using: .utf8) else { return }
-        data.withUnsafeBytes { ptr in
-            if let baseAddr = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) {
-                output.write(baseAddr, maxLength: data.count)
-            }
-        }
+        guard let data = pong.data(using: .utf8) else { return }
+        writeBuffer.append(data)
+        flushWriteBuffer()
     }
 
     /// Safely extract XML attribute value without regex (security: prevent regex DoS)
@@ -338,16 +339,24 @@ class XMPPConnection: NSObject, StreamDelegate {
     }
 
     private func checkIdleTimeout() {
-        let idle = Date().timeIntervalSince(lastActivityTime)
-        if idle > idleTimeoutSeconds {
-            logDisconnectReason("CLIENT", "idle timeout — no inbound data for \(Int(idle))s, closing")
-            disconnect()
+        // lastActivityTime is stream-thread-confined — hop there to read it.
+        performOnStreamThread { [weak self] in
+            guard let self = self else { return }
+            let idle = Date().timeIntervalSince(self.lastActivityTime)
+            if idle > self.idleTimeoutSeconds {
+                logDisconnectReason("CLIENT", "idle timeout - no inbound data for \(Int(idle))s, closing")
+                DispatchQueue.main.async { self.disconnect() }
+            }
         }
     }
 
     private func closeStreams() {
-        idleTimeoutTimer?.invalidate()
-        idleTimeoutTimer = nil
+        // The idle timer was scheduled on the main runloop; Timer must be
+        // invalidated from the thread it was installed on.
+        DispatchQueue.main.async { [weak self] in
+            self?.idleTimeoutTimer?.invalidate()
+            self?.idleTimeoutTimer = nil
+        }
         inputStream?.close()
         outputStream?.close()
         inputStream?.remove(from: .current, forMode: .default)

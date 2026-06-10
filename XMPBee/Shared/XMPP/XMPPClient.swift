@@ -929,10 +929,18 @@ class XMPPClient: XMLStreamParserDelegate {
         case "stream:error":
             // Server-initiated stream teardown with a reason (e.g. <conflict/> when a
             // same-resource client displaces this one, <policy-violation/>, <system-shutdown/>).
-            // Previously fell through to `default` and was dropped, so the reason was lost.
             let condition = stanza.children.first(where: { $0.name != "text" })?.name ?? "unknown"
             let text = stanza.child(named: "text")?.text ?? ""
-            logDisconnectReason("REMOTE", "server sent <stream:error>: \(condition)\(text.isEmpty ? "" : " — \(text)")")
+            logDisconnectReason("REMOTE", "server sent <stream:error>: \(condition)\(text.isEmpty ? "" : " - \(text)")")
+            // Conflict is the one condition the user genuinely needs to see: their
+            // session was displaced by another login binding the same full JID.
+            // Everything else stays log-only; the stream-close path that follows
+            // already drives disconnect/reconnect handling.
+            if condition == "conflict" {
+                delegate?.xmpp(self, didFailWithError: .streamError(
+                    "This account connected from another device using the same resource; the server replaced this session."
+                ))
+            }
 
         default:
             break
@@ -976,6 +984,44 @@ class XMPPClient: XMLStreamParserDelegate {
                     : "<iq type='result' id='\(id.xmlEscaped)' to='\(from.xmlEscaped)'/>"
                 connection?.send(pong)
             }
+            return
+        }
+
+        // Same presence-leak allow-list the ping responder uses: our server, our own
+        // JID, or our own MUC occupant JIDs. IQs from anyone else are dropped silently
+        // (a deliberate deviation from RFC 6120 §8.4's reply requirement — replying
+        // would hand arbitrary peers an online-status oracle).
+        let fromIsTrusted = from.isEmpty || from == domain || from == jid
+            || from.hasPrefix(jid + "/") || isOwnOccupantJID(from)
+
+        // XEP-0030 disco#info: servers (and MUC services) probe this for liveness and
+        // capability checks; leaving it unanswered makes us look dead. Minimal reply:
+        // client identity + the features we genuinely support.
+        if type == "get", let query = iq.child(named: "query", xmlns: "http://jabber.org/protocol/disco#info") {
+            guard fromIsTrusted, !id.isEmpty else { return }
+            #if os(macOS)
+            let clientType = "pc"
+            #else
+            let clientType = "phone"
+            #endif
+            let nodeAttr = (query["node"].map { " node='\($0.xmlEscaped)'" }) ?? ""
+            let response = "<iq type='result' id='\(id.xmlEscaped)'\(from.isEmpty ? "" : " to='\(from.xmlEscaped)'")>"
+                + "<query xmlns='http://jabber.org/protocol/disco#info'\(nodeAttr)>"
+                + "<identity category='client' type='\(clientType)' name='XMPBee'/>"
+                + "<feature var='http://jabber.org/protocol/disco#info'/>"
+                + "<feature var='urn:xmpp:ping'/>"
+                + "</query></iq>"
+            connection?.send(response)
+            return
+        }
+
+        // RFC 6120 §8.4: any other unhandled get/set must receive an error reply
+        // (trusted senders only, per above).
+        if type == "get" || type == "set" {
+            guard fromIsTrusted, !id.isEmpty else { return }
+            let errorIQ = "<iq type='error' id='\(id.xmlEscaped)'\(from.isEmpty ? "" : " to='\(from.xmlEscaped)'")>"
+                + "<error type='cancel'><service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>"
+            connection?.send(errorIQ)
             return
         }
 
@@ -1035,12 +1081,19 @@ class XMPPClient: XMLStreamParserDelegate {
             return
         }
 
-        guard let body = msg.child(named: "body"), !body.text.isEmpty else { return }
+        // Bodyless stanzas (chat-state notifications etc.) are ignored, EXCEPT error
+        // bounces: servers don't always echo the original <body>, and the delivery-
+        // failure path upstream doesn't need one.
+        let bodyText = msg.child(named: "body")?.text ?? ""
+        guard !bodyText.isEmpty || type == "error" else { return }
 
-        // Check for delayed delivery (message history)
+        // Check for delayed delivery (message history): XEP-0203 <delay/> or the
+        // legacy XEP-0091 <x jabber:x:delay/>. Match by namespace — a bare
+        // child(named: "x") would also grab unrelated <x> payloads (muc#user etc.).
         var timestamp: Date? = nil
         var isDelayed = false
-        if let delay = msg.child(named: "delay") ?? msg.child(named: "x") {
+        if let delay = msg.child(named: "delay", xmlns: "urn:xmpp:delay")
+                    ?? msg.child(named: "x", xmlns: "jabber:x:delay") {
             if let stamp = delay["stamp"] {
                 timestamp = parseXMPPDate(stamp)
                 isDelayed = true
@@ -1056,7 +1109,7 @@ class XMPPClient: XMLStreamParserDelegate {
 
         let incoming = XMPPIncomingMessage(
             from: from,
-            body: body.text,
+            body: bodyText,
             type: type,
             timestamp: timestamp,
             isDelayed: isDelayed,

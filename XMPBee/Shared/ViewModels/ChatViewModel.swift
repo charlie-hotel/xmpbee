@@ -1293,6 +1293,23 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         let roomJID = parts.first ?? fullFrom
         let nick = parts.count > 1 ? parts[1] : fullFrom
 
+        // Delivery failure (type="error"): the server bounced one of OUR messages,
+        // echoing it back with an <error/>. Surface it in the thread it belongs to
+        // (full-JID match catches MUC-PM tabs, bare-JID match catches DMs and MUCs)
+        // instead of rendering the echoed body as if the peer had sent it.
+        if message.type == "error" {
+            if let target = server.rooms.first(where: { $0.jid == fullFrom })
+                         ?? server.rooms.first(where: { $0.jid == roomJID }) {
+                target.messages.append(ChatMessage(
+                    timestamp: Date(), sender: "",
+                    body: "Message could not be delivered.",
+                    type: .system, senderColor: .gray
+                ))
+                objectWillChange.send()
+            }
+            return
+        }
+
         // Handle incoming type="chat" messages.  Two cases:
         //   1. MUC private message (XEP-0045 §7.5) — from = "room@service/nick".
         //      The bare-JID portion is a ROOM, not a user.  Reply target is the
@@ -1430,22 +1447,10 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // exactly the "mirrored DM" bug pattern.
         guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
-        // Not a real occupant message. A "groupchat" with no "/nick" resource is from
-        // the room itself (server announcement / error bounce), and type="error" is a
-        // delivery failure — e.g. sending into a room we never actually joined, which
-        // happens when a nick conflict blocked the join. Don't render either as a
-        // participant message attributed to the bare room JID.
-        guard message.type != "error", parts.count > 1 else {
-            if message.type == "error" {
-                room.messages.append(ChatMessage(
-                    timestamp: Date(), sender: "",
-                    body: "Message could not be delivered to \(room.displayName).",
-                    type: .system, senderColor: .gray
-                ))
-                objectWillChange.send()
-            }
-            return
-        }
+        // A "groupchat" with no "/nick" resource is from the room itself (server
+        // announcement), not an occupant — don't render it attributed to the bare
+        // room JID. (Error bounces were already handled upfront.)
+        guard parts.count > 1 else { return }
 
         // Blocked nick (server-wide for this account): store the message but hide it
         // (views filter it out) and suppress all side effects, so unblock reveals it.

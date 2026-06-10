@@ -119,34 +119,42 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
     /// Cleared in `reset()` (called by XMPPClient.openStream() after `onTLSReady`).
     private var isTLSTransitioning = false
 
+    /// Serial queue for pipe writes.  Writing to a full bound-stream pipe BLOCKS the
+    /// writer until the parser thread drains it — doing that on the main queue (where
+    /// feed() is called from) froze the whole UI whenever the parser stalled or died.
+    private let feedQueue = DispatchQueue(label: "XMPBee.XMLStreamParser.feed")
+
     func feed(_ data: Data) {
         // STARTTLS gate: once `<proceed/>` has been seen, no more bytes go to the
         // parser until the post-TLS reset.  TLS handshake bytes are consumed by
         // the SSL stack directly from the socket, not by us.
         if isTLSTransitioning { return }
 
-        guard let str = String(data: data, encoding: .utf8) else { return }
-
-        // Strip XML declarations — they appear at the start of each XMPP stream
-        // but are not valid mid-stream
-        let cleaned = str.replacingOccurrences(
-            of: "<\\?xml[^?]*\\?>",
-            with: "",
-            options: .regularExpression
-        )
-        guard !cleaned.isEmpty else { return }
-        guard let cleanedData = cleaned.data(using: .utf8) else { return }
-
         // If parser isn't running yet, start it
         if pipeInput == nil {
             startParser()
         }
+        guard let pipe = pipeInput else { return }
 
-        // Push data into the pipe — the XMLParser on the background thread
-        // will read it and fire SAX callbacks
-        cleanedData.withUnsafeBytes { ptr in
-            if let baseAddr = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) {
-                pipeInput?.write(baseAddr, maxLength: cleanedData.count)
+        // Feed RAW bytes.  No Data→String→Data round-trip: a TCP segment boundary can
+        // split a multi-byte UTF-8 sequence, and String(data:) returning nil used to
+        // silently drop the whole chunk (stream desync → parse error → lost stanzas).
+        // The old regex that stripped <?xml?> declarations is gone for the same
+        // reason — declarations only legitimately appear at the start of a stream,
+        // and every stream (re)start gets a fresh parser via reset(), where a
+        // declaration is valid document-start XML that NSXMLParser handles natively.
+        //
+        // Writes loop over partial writes; a write error (pipe closed by stopParser/
+        // recovery) drops the remainder, which is correct — that parser is gone.
+        feedQueue.async {
+            data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+                guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                var offset = 0
+                while offset < data.count {
+                    let written = pipe.write(base + offset, maxLength: data.count - offset)
+                    guard written > 0 else { return }
+                    offset += written
+                }
             }
         }
     }
@@ -301,11 +309,19 @@ class XMLStreamParser: NSObject, XMLParserDelegate {
         // Prime the new parser with a synthetic stream root so NSXMLParser
         // believes it is correctly positioned inside an XML document.
         // The didStartElement callback suppresses the delegate notification.
+        // Routed through feedQueue like all pipe writes: keeps ordering with any
+        // in-flight chunks and keeps blocking writes off the main thread.
         let fakeStream = "<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>"
-        if let data = fakeStream.data(using: .utf8) {
-            data.withUnsafeBytes { ptr in
-                if let baseAddr = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) {
-                    pipeInput?.write(baseAddr, maxLength: data.count)
+        if let data = fakeStream.data(using: .utf8), let pipe = pipeInput {
+            feedQueue.async {
+                data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+                    guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                    var offset = 0
+                    while offset < data.count {
+                        let written = pipe.write(base + offset, maxLength: data.count - offset)
+                        guard written > 0 else { return }
+                        offset += written
+                    }
                 }
             }
         }
