@@ -22,6 +22,7 @@ struct XMPBeeApp: App {
         .windowStyle(.automatic)
         .defaultSize(width: 1000, height: 650)
         .commands {
+            AppZoomCommands()
             #if canImport(Sparkle)
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: updaterController.updater)

@@ -85,6 +85,8 @@
 		D9B0A5CC3A4959D683008978 /* Shared/Models/Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = A323A13FD5A83507F3E0506A /* Shared/Models/Room.swift */; };
 		DDE442C4B5E347411F021743 /* Shared/Models/Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D9F35C43F93C00196950A4F /* Shared/Models/Server.swift */; };
 		F7498D5559DB8CCF451918D1 /* Shared/Views/URLOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113A5C03CF086AC03BCF1EB6 /* Shared/Views/URLOpener.swift */; };
+		AB7700000000000000000002 /* Mac/AppZoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB7700000000000000000001 /* Mac/AppZoom.swift */; };
+		AB7700000000000000000003 /* Mac/AppZoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB7700000000000000000001 /* Mac/AppZoom.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -133,6 +135,7 @@
 		DFFF3A07D8A706087B8225B5 /* Shared/Models/Occupant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Models/Occupant.swift; sourceTree = "<group>"; };
 		EF7BE0B2E64133E9B60F5A86 /* Mac/PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/PreferencesView.swift; sourceTree = "<group>"; };
 		F7DC3B6A60D74E1180024B94 /* iOS/BrowseRoomsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/BrowseRoomsScreen.swift; sourceTree = "<group>"; };
+		AB7700000000000000000001 /* Mac/AppZoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/AppZoom.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				67FC88E1F5F55E4454A147CC /* Mac/App.swift */,
+				AB7700000000000000000001 /* Mac/AppZoom.swift */,
 				80E8D9E0468E18074C0C775E /* Models */,
 				E8C9277A35DC24F2FCD6E8AB /* Views */,
 				03A315BFB4145C0FD705317D /* ViewModels */,
@@ -399,6 +403,7 @@
 			files = (
 				0F4B20AE2FD6CE8A00ECCAB5 /* Shared/Services/LogManager.swift in Sources */,
 				0F4B20AF2FD6CE8A00ECCAB5 /* Mac/App.swift in Sources */,
+				AB7700000000000000000002 /* Mac/AppZoom.swift in Sources */,
 				0F4B20B02FD6CE8A00ECCAB5 /* Shared/Models/ChatMessage.swift in Sources */,
 				0F4B20B12FD6CE8A00ECCAB5 /* Shared/Models/NotificationManager.swift in Sources */,
 				0F4B20B22FD6CE8A00ECCAB5 /* Shared/Models/Occupant.swift in Sources */,
@@ -462,6 +467,7 @@
 			files = (
 				0FD151432F43E883000034D0 /* Shared/Services/LogManager.swift in Sources */,
 				2CBEAAE56AE6BF7BFB8E19D4 /* Mac/App.swift in Sources */,
+				AB7700000000000000000003 /* Mac/AppZoom.swift in Sources */,
 				48982CF2A29F30DE436E9565 /* Shared/Models/ChatMessage.swift in Sources */,
 				4D98CFEC212310210A0E396F /* Shared/Models/NotificationManager.swift in Sources */,
 				8C4C18EB941C2D47ACA22AF6 /* Shared/Models/Occupant.swift in Sources */,

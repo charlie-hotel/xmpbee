@@ -153,6 +153,7 @@ struct ConnectSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .appZoom()
         // hostname is auto-derived from JID at connect time if left empty
         .onAppear {
             if isEditing { loadEditingValues() }

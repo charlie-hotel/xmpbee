@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct PreferencesView: View {
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var notifications: NotificationManager
+    @AppStorage(AppZoom.key) private var zoomPercent = 100
     @AppStorage("hideJoinPart") private var hideJoinPart = true
     @Environment(\.dismiss) private var dismiss
     @State private var showSoundFilePicker = false
@@ -17,6 +18,11 @@ struct PreferencesView: View {
             // Display options
             GroupBox("Display") {
                 VStack(alignment: .leading, spacing: 6) {
+                    Picker("Interface zoom:", selection: $zoomPercent) {
+                        ForEach(AppZoom.levels, id: \.self) { percent in
+                            Text("\(percent)%").tag(percent)
+                        }
+                    }
                     Toggle("Hide join / part / quit events in chat", isOn: $hideJoinPart)
                 }
                 .toggleStyle(.checkbox)
@@ -109,6 +115,7 @@ struct PreferencesView: View {
         }
         .padding(20)
         .frame(width: 420)
+        .appZoom()
         .fileImporter(
             isPresented: $showSoundFilePicker,
             allowedContentTypes: [.aiff, .wav, .mp3, .audio],

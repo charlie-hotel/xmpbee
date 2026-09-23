@@ -67,6 +67,7 @@ struct LogViewerWindow: View {
         } detail: {
             logDetailView
         }
+        .appZoom()
         .navigationTitle("Log Viewer")
         .onChange(of: selectedRoom) {
             selectedServer = servers.first { LogManager.shared.getLoggedRooms(for: $0).contains(selectedRoom ?? "") }

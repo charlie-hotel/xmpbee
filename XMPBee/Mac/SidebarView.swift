@@ -180,6 +180,7 @@ struct JoinRoomPopover: View {
         }
         .padding(20)
         .frame(width: 340)
+        .appZoom()
     }
 }
 
@@ -221,6 +222,7 @@ struct NewDMPopover: View {
         }
         .padding(20)
         .frame(width: 340)
+        .appZoom()
     }
 }
 
@@ -360,6 +362,7 @@ struct RoomBrowserPopover: View {
         }
         .padding()
         .frame(width: 340, height: 500)
+        .appZoom()
         .onAppear {
             viewModel.browseRooms(on: server)
         }
@@ -468,6 +471,7 @@ struct UserSearchPopover: View {
         }
         .padding()
         .frame(width: 340, height: 500)
+        .appZoom()
     }
 
     private func runSearch() {
