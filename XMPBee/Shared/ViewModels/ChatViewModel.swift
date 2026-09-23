@@ -1666,18 +1666,11 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             // Room subjects only belong to actual MUC rooms.
             guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
-            room.topic = subject
-            // Only show topic in chat once per session, not on every reconnect
-            if !subject.isEmpty && !room.hasDisplayedTopic {
-                let msg = ChatMessage(
-                    timestamp: Date(), sender: "", body: subject,
-                    type: .topic, senderColor: .gray
-                )
-                room.messages.append(msg)
-                room.hasDisplayedTopic = true
-                // Scroll to bottom after initial connect sequence completes
+            let hadDisplayedTopic = room.hasDisplayedTopic
+            room.updateTopic(subject)
+            if !hadDisplayedTopic && room.hasDisplayedTopic {
+                // Only the initial topic forces scrolling; later changes follow normal chat scrolling.
                 scrollToBottomTrigger += 1
-                // Don't log topics - they're sent on every join and aren't chat messages
             }
             objectWillChange.send()
         }

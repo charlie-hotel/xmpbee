@@ -6,6 +6,7 @@ class Room: Identifiable, ObservableObject, Hashable {
     let id = UUID()
     @Published var jid: String          // room@conference.domain
     @Published var name: String         // display name (e.g. "#general")
+    @Published private(set) var hasReceivedTopic = false
     @Published var topic: String
     @Published var messages: [ChatMessage] = []
     @Published var occupants: [Occupant] = []
@@ -29,7 +30,7 @@ class Room: Identifiable, ObservableObject, Hashable {
     var initialPresenceComplete = false
     /// Buffer for occupants during initial presence flood
     var pendingOccupants: [Occupant] = []
-    /// Whether the topic has been displayed in chat this session (suppress on reconnect)
+    /// Whether a topic has been displayed in chat this session (for initial scrolling).
     var hasDisplayedTopic = false
 
     var displayName: String {
@@ -43,6 +44,25 @@ class Room: Identifiable, ObservableObject, Hashable {
         self.name = name
         self.topic = topic
         self.nickname = nickname
+    }
+
+    /// Keep the current topic and transcript in sync, suppressing unchanged repeats on rejoin.
+    func updateTopic(_ subject: String) {
+        let changed = topic != subject
+        topic = subject
+        hasReceivedTopic = true
+        guard changed || (!hasDisplayedTopic && !subject.isEmpty) else { return }
+
+        messages.append(ChatMessage(
+            timestamp: Date(), sender: "", body: subject.isEmpty ? "Topic cleared." : subject,
+            type: subject.isEmpty ? .system : .topic, senderColor: .gray
+        ))
+        hasDisplayedTopic = true
+    }
+
+    /// Initial room sync must finish before comparing with the last message read.
+    func hasTopicUpdate(since lastReadTopic: String?) -> Bool {
+        hasReceivedTopic && lastReadTopic != nil && topic != lastReadTopic
     }
 
     static func == (lhs: Room, rhs: Room) -> Bool { lhs.id == rhs.id }

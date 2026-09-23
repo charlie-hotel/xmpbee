@@ -13,7 +13,6 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @AppStorage("hideJoinPart") private var hideJoinPart = true
     @FocusState private var isInputFocused: Bool
-    @State private var topicHovered = false
 
     // MARK: - Tab completion state
     @State private var completionCandidates: [String] = []
@@ -22,49 +21,46 @@ struct ChatView: View {
     @State private var lastCompletedText: String = ""  // guards against cycling after manual edit
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Transcript / empty state — content shows through glass bars
-            Group {
-                if viewModel.selectedRoom != nil {
-                    ChatTranscriptView(
-                        room: viewModel.selectedRoom,
-                        // Touch messages.count so SwiftUI re-invokes updateNSView when new
-                        // messages arrive even though Room is a separate ObservableObject.
-                        messageCount: viewModel.selectedRoom?.messages.count ?? 0,
-                        hideJoinPart: hideJoinPart,
-                        scrollTrigger: viewModel.scrollToBottomTrigger,
-                        blockedSenders: viewModel.selectedServer?.blockedDisplayNicks ?? []
-                    )
-                } else {
-                    emptyState
-                }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                Color.clear.frame(height: 44)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: 64)
-            }
-            .onChange(of: viewModel.selectedRoom?.id) {
-                // Reset tab completion on room switch
-                completionCandidates = []
-                completionIndex = 0
-                completionBase = ""
-                lastCompletedText = ""
-                // Focus input when switching rooms
-                DispatchQueue.main.async {
-                    isInputFocused = true
-                }
-            }
-
-            // Floating topic bar at top
-            VStack(spacing: 0) {
+        GeometryReader { geometry in
+            VStack(spacing: 6) {
                 topicBar
-                Spacer()
-            }
+                if let room = viewModel.selectedRoom, !room.isDM {
+                    MessageOfTheDayCard(
+                        room: room,
+                        account: viewModel.selectedServer?.jid ?? "",
+                        maximumTextHeight: max(40, geometry.size.height - 150)
+                    )
+                    .id(room.id)
+                }
 
-            // Floating input bar at bottom
-            inputBar
+                Group {
+                    if viewModel.selectedRoom != nil {
+                        ChatTranscriptView(
+                            room: viewModel.selectedRoom,
+                            messageCount: viewModel.selectedRoom?.messages.count ?? 0,
+                            hideJoinPart: hideJoinPart,
+                            scrollTrigger: viewModel.scrollToBottomTrigger,
+                            blockedSenders: viewModel.selectedServer?.blockedDisplayNicks ?? []
+                        )
+                    } else {
+                        emptyState
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .clipped()
+                .layoutPriority(-1)
+
+                inputBar
+            }
+        }
+        .onChange(of: viewModel.selectedRoom?.id) {
+            completionCandidates = []
+            completionIndex = 0
+            completionBase = ""
+            lastCompletedText = ""
+            DispatchQueue.main.async {
+                isInputFocused = true
+            }
         }
     }
 
@@ -155,15 +151,6 @@ struct ChatView: View {
                         .foregroundStyle(.blue)
                     }
 
-                    if !isBlockedDM && !room.topic.isEmpty && !topicHovered {
-                        Text("-")
-                            .foregroundStyle(.tertiary)
-                        Text(room.topic)
-                            .font(Theme.monoFontSmall)
-                            .foregroundStyle(Theme.topicText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
                 } else {
                     Text("XMPP Client")
                         .font(Theme.monoFontBold)
@@ -172,22 +159,13 @@ struct ChatView: View {
                 Spacer()
             }
 
-            // Expanded topic with clickable links on hover
-            if topicHovered, let room = viewModel.selectedRoom, !room.topic.isEmpty {
-                TopicTextView(topic: room.topic)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .glassEffect(.regular, in: .rect(cornerRadius: 12))
         .padding(.horizontal, 6)
         .padding(.top, 4)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                topicHovered = hovering
-            }
-        }
+
     }
 
     // MARK: - Input Bar (glass)
@@ -234,6 +212,95 @@ struct ChatView: View {
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 14))
         .padding(.horizontal, 6)
         .padding(.bottom, 6)
+    }
+}
+
+/// The saved value is scoped to an account and room, not a temporary Room UUID.
+private struct MessageOfTheDayCard: View {
+    @ObservedObject var room: Room
+    @Environment(\.controlActiveState) private var windowActiveState
+    @AppStorage private var lastReadTopic: String?
+    @State private var isExpanded = true
+    @State private var textHeight: CGFloat = 1
+    let maximumTextHeight: CGFloat
+
+    init(room: Room, account: String, maximumTextHeight: CGFloat) {
+        self.maximumTextHeight = maximumTextHeight
+        self.room = room
+        _lastReadTopic = AppStorage("lastReadTopic.\(account)\n\(room.jid)")
+    }
+
+    var body: some View {
+        if room.hasReceivedTopic || !room.topic.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "text.bubble")
+                        Text("Message of the day")
+                            .font(Theme.monoFontBold)
+                        if room.hasTopicUpdate(since: lastReadTopic) {
+                            Text("Updated")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.orange.opacity(0.12), in: Capsule())
+                        }
+                        Spacer()
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityHint("Show or hide the full message of the day")
+
+                if isExpanded {
+                    ScrollView {
+                        Text(MessageAttributedStringBuilder.topicAttributedString(
+                            room.topic.isEmpty ? "No message of the day set." : room.topic
+                        ))
+                            .font(Theme.monoFontSmall)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                                textHeight = $0
+                            }
+                    }
+                    .frame(height: min(textHeight, maximumTextHeight))
+                    .environment(\.openURL, OpenURLAction { url in
+                        if MessageAttributedStringBuilder.isAllowedClickableURL(url) {
+                            URLOpener.open(url)
+                        }
+                        return .handled
+                    })
+                } else {
+                    Text(room.topic.isEmpty ? "No message of the day set." : room.topic)
+                        .font(Theme.monoFontSmall)
+                        .foregroundStyle(Theme.topicText)
+                        .lineLimit(2)
+                }
+            }
+            .padding(12)
+            .glassEffect(.regular, in: .rect(cornerRadius: 12))
+            .padding(.horizontal, 6)
+            .onAppear { recordViewedTopic() }
+            .onChange(of: room.topic) { recordViewedTopic() }
+            .onChange(of: room.hasReceivedTopic) { recordViewedTopic() }
+            .onChange(of: windowActiveState) { recordViewedTopic() }
+        }
+    }
+
+    private func recordViewedTopic() {
+        // Only the selected channel in the focused window counts as viewed.
+        guard windowActiveState == .key, room.hasReceivedTopic else { return }
+        if room.hasTopicUpdate(since: lastReadTopic) {
+            isExpanded = true
+        }
+        lastReadTopic = room.topic
     }
 }
 
