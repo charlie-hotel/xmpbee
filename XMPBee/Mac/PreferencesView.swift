@@ -7,6 +7,8 @@ struct PreferencesView: View {
     @ObservedObject var notifications: NotificationManager
     @AppStorage(AppZoom.key) private var zoomPercent = 100
     @AppStorage("hideJoinPart") private var hideJoinPart = true
+    @AppStorage(MOTDPreferences.defaultExpandedKey) private var motdDefaultExpanded = MOTDPreferences.defaultExpandedDefault
+    @AppStorage(MOTDPreferences.expandOnUpdateKey) private var motdExpandOnUpdate = MOTDPreferences.expandOnUpdateDefault
     @Environment(\.dismiss) private var dismiss
     @State private var showSoundFilePicker = false
 
@@ -24,6 +26,8 @@ struct PreferencesView: View {
                         }
                     }
                     Toggle("Hide join / part / quit events in chat", isOn: $hideJoinPart)
+                    Toggle("Show message of the day expanded by default", isOn: $motdDefaultExpanded)
+                    Toggle("Expand message of the day when the topic changes", isOn: $motdExpandOnUpdate)
                 }
                 .toggleStyle(.checkbox)
                 .font(.system(size: 12))

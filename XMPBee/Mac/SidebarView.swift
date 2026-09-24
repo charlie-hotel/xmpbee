@@ -254,7 +254,14 @@ struct ChannelRow: View {
 
             Spacer()
 
-            if room.unreadCount > 0 {
+            if room.motdUpdated {
+                Text("MOTD")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .glassEffect(.regular.tint(.accentColor), in: .capsule)
+            } else if room.unreadCount > 0 {
                 Text("\(room.unreadCount)")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.white)

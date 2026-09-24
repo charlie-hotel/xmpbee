@@ -23,14 +23,17 @@ struct ChatView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 6) {
-                topicBar
-                if let room = viewModel.selectedRoom, !room.isDM {
-                    MessageOfTheDayCard(
-                        room: room,
-                        account: viewModel.selectedServer?.jid ?? "",
-                        maximumTextHeight: max(40, geometry.size.height - 150)
-                    )
-                    .id(room.id)
+                if let room = viewModel.selectedRoom {
+                    if room.isDM {
+                        topicBar
+                    } else {
+                        MessageOfTheDayCard(
+                            room: room,
+                            account: viewModel.selectedServer?.jid ?? "",
+                            maximumTextHeight: max(40, geometry.size.height - 150)
+                        )
+                        .id(room.id)
+                    }
                 }
 
                 Group {
@@ -215,12 +218,20 @@ struct ChatView: View {
     }
 }
 
+enum MOTDPreferences {
+    static let defaultExpandedKey = "motdDefaultExpanded"
+    static let expandOnUpdateKey = "motdExpandOnUpdate"
+    static let defaultExpandedDefault = false
+    static let expandOnUpdateDefault = false
+}
+
 /// The saved value is scoped to an account and room, not a temporary Room UUID.
 private struct MessageOfTheDayCard: View {
     @ObservedObject var room: Room
     @Environment(\.controlActiveState) private var windowActiveState
     @AppStorage private var lastReadTopic: String?
-    @State private var isExpanded = true
+    @AppStorage(MOTDPreferences.expandOnUpdateKey) private var expandOnUpdate = MOTDPreferences.expandOnUpdateDefault
+    @State private var isExpanded: Bool
     @State private var textHeight: CGFloat = 1
     let maximumTextHeight: CGFloat
 
@@ -228,76 +239,69 @@ private struct MessageOfTheDayCard: View {
         self.maximumTextHeight = maximumTextHeight
         self.room = room
         _lastReadTopic = AppStorage("lastReadTopic.\(account)\n\(room.jid)")
+        _isExpanded = State(initialValue:
+            UserDefaults.standard.object(forKey: MOTDPreferences.defaultExpandedKey) as? Bool
+            ?? MOTDPreferences.defaultExpandedDefault)
     }
 
     var body: some View {
-        if room.hasReceivedTopic || !room.topic.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "text.bubble")
-                        Text("Message of the day")
-                            .font(Theme.monoFontBold)
-                        if room.hasTopicUpdate(since: lastReadTopic) {
-                            Text("Updated")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.orange)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.orange.opacity(0.12), in: Capsule())
-                        }
-                        Spacer()
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    }
-                    .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Text(room.displayName)
+                        .font(Theme.monoFontBold)
+                        .foregroundStyle(Theme.channelText)
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                 }
-                .buttonStyle(.plain)
-                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-                .accessibilityHint("Show or hide the full message of the day")
-
-                if isExpanded {
-                    ScrollView {
-                        Text(MessageAttributedStringBuilder.topicAttributedString(
-                            room.topic.isEmpty ? "No message of the day set." : room.topic
-                        ))
-                            .font(Theme.monoFontSmall)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
-                                textHeight = $0
-                            }
-                    }
-                    .frame(height: min(textHeight, maximumTextHeight))
-                    .environment(\.openURL, OpenURLAction { url in
-                        if MessageAttributedStringBuilder.isAllowedClickableURL(url) {
-                            URLOpener.open(url)
-                        }
-                        return .handled
-                    })
-                } else {
-                    Text(room.topic.isEmpty ? "No message of the day set." : room.topic)
-                        .font(Theme.monoFontSmall)
-                        .foregroundStyle(Theme.topicText)
-                        .lineLimit(2)
-                }
+                .contentShape(Rectangle())
             }
-            .padding(12)
-            .glassEffect(.regular, in: .rect(cornerRadius: 12))
-            .padding(.horizontal, 6)
-            .onAppear { recordViewedTopic() }
-            .onChange(of: room.topic) { recordViewedTopic() }
-            .onChange(of: room.hasReceivedTopic) { recordViewedTopic() }
-            .onChange(of: windowActiveState) { recordViewedTopic() }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Show or hide the full message of the day")
+
+            if isExpanded {
+                ScrollView {
+                    Text(MessageAttributedStringBuilder.topicAttributedString(
+                        room.topic.isEmpty ? "No message of the day set." : room.topic
+                    ))
+                        .font(Theme.monoFontSmall)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                            textHeight = $0
+                        }
+                }
+                .frame(height: min(textHeight, maximumTextHeight))
+                .environment(\.openURL, OpenURLAction { url in
+                    if MessageAttributedStringBuilder.isAllowedClickableURL(url) {
+                        URLOpener.open(url)
+                    }
+                    return .handled
+                })
+            } else {
+                Text(room.topic.isEmpty ? "No message of the day set." : room.topic)
+                    .font(Theme.monoFontSmall)
+                    .foregroundStyle(Theme.topicText)
+                    .lineLimit(2)
+            }
         }
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .padding(.horizontal, 6)
+        .onAppear { recordViewedTopic() }
+        .onChange(of: room.topic) { recordViewedTopic() }
+        .onChange(of: room.hasReceivedTopic) { recordViewedTopic() }
+        .onChange(of: windowActiveState) { recordViewedTopic() }
     }
 
     private func recordViewedTopic() {
         // Only the selected channel in the focused window counts as viewed.
         guard windowActiveState == .key, room.hasReceivedTopic else { return }
-        if room.hasTopicUpdate(since: lastReadTopic) {
+        if expandOnUpdate && room.hasTopicUpdate(since: lastReadTopic) {
             isExpanded = true
         }
         lastReadTopic = room.topic

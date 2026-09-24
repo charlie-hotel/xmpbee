@@ -708,6 +708,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             self.selectedRoom = room
             self.selectedServer = server
             room.unreadCount = 0
+            room.motdUpdated = false
         }
     }
 
@@ -1667,10 +1668,14 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             guard let room = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) else { return }
 
             let hadDisplayedTopic = room.hasDisplayedTopic
+            let changed = subject != room.topic
             room.updateTopic(subject)
             if !hadDisplayedTopic && room.hasDisplayedTopic {
                 // Only the initial topic forces scrolling; later changes follow normal chat scrolling.
                 scrollToBottomTrigger += 1
+            } else if hadDisplayedTopic && changed && selectedRoom?.id != room.id {
+                // Live update to a channel the user isn't currently viewing.
+                room.motdUpdated = true
             }
             objectWillChange.send()
         }

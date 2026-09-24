@@ -57,6 +57,13 @@ class XMLStanza {
         get { attributes[attr] }
         set { attributes[attr] = newValue }
     }
+
+    var isRoomSubjectChange: Bool {
+        (self["type"] ?? "normal") == "groupchat"
+            && child(named: "subject") != nil
+            && child(named: "body") == nil
+            && child(named: "thread") == nil
+    }
 }
 
 extension String {

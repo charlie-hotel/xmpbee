@@ -11,6 +11,9 @@ class Room: Identifiable, ObservableObject, Hashable {
     @Published var messages: [ChatMessage] = []
     @Published var occupants: [Occupant] = []
     @Published var unreadCount: Int = 0
+    /// A live MOTD/topic change arrived while this channel wasn't the selected one.
+    /// Surfaced as a "MOTD" badge in the sidebar; cleared when the channel is opened.
+    @Published var motdUpdated = false
     @Published var nickname: String     // our nick in this room
 
     /// Whether this is a DM (direct message) conversation rather than a MUC room

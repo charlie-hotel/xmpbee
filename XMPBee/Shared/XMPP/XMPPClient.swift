@@ -1074,7 +1074,7 @@ class XMPPClient: XMLStreamParserDelegate {
         let type = msg["type"] ?? "normal"
 
         // Room subject
-        if let subject = msg.child(named: "subject") {
+        if msg.isRoomSubjectChange, let subject = msg.child(named: "subject") {
             let subjectText = subject.text
             let roomJID = from.components(separatedBy: "/").first ?? from
             delegate?.xmpp(self, didReceiveRoomSubject: subjectText, room: roomJID)
