@@ -31,6 +31,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 800, minHeight: 500)
+        .appZoom()
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Button(action: {

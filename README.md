@@ -23,4 +23,4 @@ Open it in xcode and press the button. Am I signing it ever? yes! releases on th
 - Reconnects smoothly in most cases!
 - Custom notification sounds
 - Light mode and Dark mode supported
-
+- Saved interface zoom (75–200%) via View → Zoom In / Zoom Out / Actual Size, or Preferences → Display. Use ⌘+ (or ⌘=), ⌘−, and ⌘0.
