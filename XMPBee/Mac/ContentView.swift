@@ -7,7 +7,7 @@ struct ContentView: View {
     @State private var browseFilter = ""
     @State private var joinRoomName = ""
     @State private var dmNickname = ""
-    @State private var userSearchQuery = ""
+    @AppStorage("showUserList") private var showUserList = true
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -21,10 +21,10 @@ struct ContentView: View {
                 ChatView(viewModel: viewModel)
                     .frame(minWidth: 400)
 
-                if viewModel.selectedRoom?.isDM != true {
+                if showUserList && viewModel.selectedRoom?.isDM != true {
                     Divider()
 
-                    // Right panel: user list
+                    // Right panel: user list (hidden via the » toolbar toggle so chat takes the width)
                     UserListView(viewModel: viewModel)
                         .frame(minWidth: 130, idealWidth: 170, maxWidth: 230)
                 }
@@ -53,27 +53,6 @@ struct ContentView: View {
                     }
                 }
 
-                Button(action: {
-                    userSearchQuery = ""
-                    viewModel.discoveredUsers = []
-                    viewModel.userSearchError = nil
-                    viewModel.showUserSearch = true
-                }) {
-                    Label("Search Users", systemImage: "person.text.rectangle")
-                }
-                .help("Search Users")
-                .disabled(viewModel.servers.isEmpty)
-                .popover(isPresented: $viewModel.showUserSearch) {
-                    if let server = viewModel.selectedServer ?? viewModel.servers.first {
-                        UserSearchPopover(
-                            viewModel: viewModel,
-                            server: server,
-                            query: $userSearchQuery,
-                            isPresented: $viewModel.showUserSearch
-                        )
-                    }
-                }
-
                 Button(action: { openWindow(id: "logs") }) {
                     Label("Chat Logs", systemImage: "list.bullet.badge.ellipsis")
                 }
@@ -83,6 +62,13 @@ struct ContentView: View {
                     Label("Preferences", systemImage: "gearshape")
                 }
                 .help("Notification Preferences")
+
+                Button(action: { showUserList.toggle() }) {
+                    Label(showUserList ? "Hide User List" : "Show User List",
+                          systemImage: showUserList ? "chevron.right.2" : "chevron.left.2")
+                }
+                .help(showUserList ? "Hide user list (expand chat)" : "Show user list")
+                .keyboardShortcut("u", modifiers: .command)
             }
         }
         .sheet(isPresented: $viewModel.showConnectSheet) {
