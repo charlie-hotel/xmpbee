@@ -12,8 +12,10 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            // Left column: server/channel tree
+            // Left column: server/channel tree.  The system sidebar toggle is removed:
+            // it was a duplicate chevron next to the user-list toggle in the toolbar.
             SidebarView(viewModel: viewModel)
+                .toolbar(removing: .sidebarToggle)
                 .navigationSplitViewColumnWidth(min: 160, ideal: 190, max: 280)
         } detail: {
             // Main content: chat + user list side by side
