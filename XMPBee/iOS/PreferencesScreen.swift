@@ -33,11 +33,9 @@ struct PreferencesScreen: View {
 private struct PreferencesFormBody: View {
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var notifications: NotificationManager
-    @AppStorage("hideJoinPart") private var hideJoinPart = true
 
     var body: some View {
         Form {
-            displaySection
             notifySection
             soundSection
             blockedSections
@@ -71,14 +69,6 @@ private struct PreferencesFormBody: View {
                     }
                 }
             }
-        }
-    }
-
-    // MARK: Display
-
-    private var displaySection: some View {
-        Section("Display") {
-            Toggle("Hide join / part / quit events", isOn: $hideJoinPart)
         }
     }
 

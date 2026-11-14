@@ -15,11 +15,11 @@ I too am an AI skeptic, so yeah, I realise the irony of putting out a vibecoded 
 Open it in xcode and press the button. Am I signing it ever? yes! releases on this repo are signed and don't require xattr messing to launch
 
 # Features
-- It's a native mac application. It only uses around 80-200mb of RAM.
+- It's a native mac application. RAM stays bounded in long sessions (transcript scrollback is capped per room) — typically 50-150mb after days open
 - Modern macOS UI - native in form, native in spirit
 - XMPP only!
 - Prioritizes multi-user rooms over DMs, no contact list (you can open a DM and receive DMs though). The contact list is a bourgeois preoccupation.
-- Join/part hiding on by default, no spam out of the gate like Adium
+- Join/part events don't clutter the scrollback at all (optional notifications instead), no spam out of the gate like Adium
 - Reconnects smoothly in most cases!
 - Custom notification sounds
 - Light mode and Dark mode supported

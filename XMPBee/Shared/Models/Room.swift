@@ -49,12 +49,14 @@ class Room: Identifiable, ObservableObject, Hashable {
         self.nickname = nickname
     }
 
-    /// In-memory transcript ceiling. Without it, every chat line AND every
-    /// join/part presence row (hidden by default but still stored, so the
-    /// hide-join/part toggle can reveal them) accumulates for the life of the
-    /// process — a 2-day uptime on busy MUCs reached ~550 MB this way.
-    /// Older lines are never lost to the user: LogManager writes every message
-    /// to disk and the log viewer reads history back on demand.
+    /// In-memory transcript ceiling. Without it, every stored line accumulated
+    /// for the life of the process — a 2-day uptime on busy MUCs reached ~550 MB
+    /// this way. (Join/part/quit rows are no longer stored at all — see
+    /// `ChatViewModel.xmppDidReceivePresenceMain` — so this window holds only
+    /// chat, actions, topics, and system lines, and the hide-join/part toggle
+    /// that once filtered them at render time is gone.) Older lines are never
+    /// lost to the user: LogManager writes chat/action traffic to disk and the
+    /// log viewer reads history back on demand.
     ///
     /// Trimming uses hysteresis (cap → floor) on purpose. A one-for-one trim
     /// would keep `messages.count` pinned at the cap, which breaks the macOS

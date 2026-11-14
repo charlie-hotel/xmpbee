@@ -1578,7 +1578,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
         // Blocked nick: still track their presence (so unblock can restore them if
         // they're still present) but suppress join/part notifications. The occupant
-        // list and join/part transcript lines are hidden by the views while blocked.
+        // list and their chat messages are hidden by the views while blocked.
         let blocked = server.isBlocked(nick: nick)
 
         let affiliation: Occupant.Affiliation = {
@@ -1607,15 +1607,8 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
 
         if presence.type == "unavailable" {
             room.occupants.removeAll { $0.nick == nick }
-            if room.initialPresenceComplete {
-                let msg = ChatMessage(
-                    timestamp: Date(), sender: safeNick, body: "",
-                    type: .part, senderColor: ChatMessage.colorForNick(safeNick)
-                )
-                room.addMessage(msg)
-                if !blocked {
-                    notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: false)
-                }
+            if room.initialPresenceComplete && !blocked {
+                notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: false)
             }
         } else {
             let occupant = Occupant(nick: nick, affiliation: affiliation, role: role)
@@ -1647,11 +1640,6 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                     // Insert in sorted position — keeps the list sorted so the view doesn't have to
                     let insertIdx = room.occupants.firstIndex(where: { occupant < $0 }) ?? room.occupants.endIndex
                     room.occupants.insert(occupant, at: insertIdx)
-                    let msg = ChatMessage(
-                        timestamp: Date(), sender: safeNick, body: "",
-                        type: .join, senderColor: ChatMessage.colorForNick(safeNick)
-                    )
-                    room.addMessage(msg)
                     if !blocked {
                         notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: true)
                     }
