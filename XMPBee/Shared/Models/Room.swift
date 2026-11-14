@@ -49,6 +49,30 @@ class Room: Identifiable, ObservableObject, Hashable {
         self.nickname = nickname
     }
 
+    /// In-memory transcript ceiling. Without it, every chat line AND every
+    /// join/part presence row (hidden by default but still stored, so the
+    /// hide-join/part toggle can reveal them) accumulates for the life of the
+    /// process — a 2-day uptime on busy MUCs reached ~550 MB this way.
+    /// Older lines are never lost to the user: LogManager writes every message
+    /// to disk and the log viewer reads history back on demand.
+    ///
+    /// Trimming uses hysteresis (cap → floor) on purpose. A one-for-one trim
+    /// would keep `messages.count` pinned at the cap, which breaks the macOS
+    /// transcript's incremental-append diff (`current > renderedCount` never
+    /// fires) and would force a full text-storage rebuild on *every* message.
+    /// With a 500-line slack, only the rare trim step pays the rebuild.
+    static let messageCap = 2_000
+    static let messageFloor = 1_500
+
+    /// Append a transcript line, dropping the oldest block once the room is
+    /// over `messageCap`. All runtime transcript writes MUST go through here.
+    func addMessage(_ message: ChatMessage) {
+        messages.append(message)
+        if messages.count > Self.messageCap {
+            messages.removeFirst(messages.count - Self.messageFloor)
+        }
+    }
+
     /// Keep the current topic and transcript in sync, suppressing unchanged repeats on rejoin.
     func updateTopic(_ subject: String) {
         let changed = topic != subject
@@ -56,7 +80,7 @@ class Room: Identifiable, ObservableObject, Hashable {
         hasReceivedTopic = true
         guard changed || (!hasDisplayedTopic && !subject.isEmpty) else { return }
 
-        messages.append(ChatMessage(
+        addMessage(ChatMessage(
             timestamp: Date(), sender: "", body: subject.isEmpty ? "Topic cleared." : subject,
             type: subject.isEmpty ? .system : .topic, senderColor: .gray
         ))

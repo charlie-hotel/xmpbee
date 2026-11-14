@@ -130,7 +130,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
            Date().timeIntervalSince(last) < Self.mucRejoinCooldownInterval { return }
         mucRejoinCooldown[roomID] = Date()
 
-        room.messages.append(ChatMessage(
+        room.addMessage(ChatMessage(
             timestamp: Date(), sender: "",
             body: "Server dropped us from \(room.displayName), rejoining...",
             type: .system, senderColor: .gray
@@ -766,7 +766,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 timestamp: Date(), sender: room.nickname, body: text,
                 type: .chat, senderColor: ChatMessage.colorForNick(room.nickname)
             )
-            room.messages.append(msg)
+            room.addMessage(msg)
             objectWillChange.send()
 
             // Log outgoing message under a path that distinguishes MUC PMs from
@@ -902,7 +902,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             timestamp: Date(), sender: room.nickname, body: body,
             type: .chat, senderColor: ChatMessage.colorForNick(room.nickname)
         )
-        dmRoom.messages.append(msg)
+        dmRoom.addMessage(msg)
         objectWillChange.send()
         selectedRoom = dmRoom
         selectedServer = server
@@ -1115,7 +1115,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             timestamp: Date(), sender: "", body: text,
             type: .system, senderColor: .gray
         )
-        room.messages.append(msg)
+        room.addMessage(msg)
     }
 
     /// Automatic reconnect/backoff events are intentionally NOT written into the chat
@@ -1132,7 +1132,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // address can't get promoted/reused as a MUC.
         if let existingRoom = server.rooms.first(where: { !$0.isDM && $0.jid == roomJID }) {
             // Reuse existing room to preserve message history
-            existingRoom.messages.append(ChatMessage(
+            existingRoom.addMessage(ChatMessage(
                 timestamp: Date(), sender: "", body: "Rejoining \(existingRoom.displayName)...",
                 type: .system, senderColor: .gray
             ))
@@ -1147,7 +1147,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         // Create new room if it doesn't exist
         let room = Room(jid: roomJID, name: roomName, nickname: nickname)
 
-        room.messages.append(ChatMessage(
+        room.addMessage(ChatMessage(
             timestamp: Date(), sender: "", body: "Joining \(room.displayName)...",
             type: .system, senderColor: .gray
         ))
@@ -1194,7 +1194,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         if let config = pendingConfig[server.id] {
             if config.rooms.isEmpty {
                 let statusRoom = Room(jid: "", name: server.name, nickname: config.nickname)
-                statusRoom.messages.append(ChatMessage(
+                statusRoom.addMessage(ChatMessage(
                     timestamp: Date(), sender: "", body: "Connected to \(server.hostname) as \(client.boundJID)",
                     type: .system, senderColor: .gray
                 ))
@@ -1301,7 +1301,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
         if message.type == "error" {
             if let target = server.rooms.first(where: { $0.jid == fullFrom })
                          ?? server.rooms.first(where: { $0.jid == roomJID }) {
-                target.messages.append(ChatMessage(
+                target.addMessage(ChatMessage(
                     timestamp: Date(), sender: "",
                     body: "Message could not be delivered.",
                     type: .system, senderColor: .gray
@@ -1362,7 +1362,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                     if isDuplicate { return }
                 }
 
-                pmRoom.messages.append(chatMsg)
+                pmRoom.addMessage(chatMsg)
                 objectWillChange.send()
 
                 LogManager.shared.logMessage(
@@ -1413,7 +1413,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 }
             }
 
-            dmRoom.messages.append(chatMsg)
+            dmRoom.addMessage(chatMsg)
             objectWillChange.send()
 
             // Log DM to disk
@@ -1489,7 +1489,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
             }
         }
 
-        room.messages.append(chatMsg)
+        room.addMessage(chatMsg)
         objectWillChange.send()
 
         // While blocked the message is hidden, so skip logging, unread, and notifications.
@@ -1612,7 +1612,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                     timestamp: Date(), sender: safeNick, body: "",
                     type: .part, senderColor: ChatMessage.colorForNick(safeNick)
                 )
-                room.messages.append(msg)
+                room.addMessage(msg)
                 if !blocked {
                     notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: false)
                 }
@@ -1637,7 +1637,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                         body: "Joined \(room.displayName) (\(room.occupants.count) users)",
                         type: .system, senderColor: .gray
                     )
-                    room.messages.append(msg)
+                    room.addMessage(msg)
                     // Don't log our own join events
                 }
             } else {
@@ -1651,7 +1651,7 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                         timestamp: Date(), sender: safeNick, body: "",
                         type: .join, senderColor: ChatMessage.colorForNick(safeNick)
                     )
-                    room.messages.append(msg)
+                    room.addMessage(msg)
                     if !blocked {
                         notifications.notifyJoinPart(room: room.displayName, user: safeNick, joined: true)
                     }

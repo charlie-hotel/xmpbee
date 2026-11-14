@@ -7,8 +7,10 @@ import AppKit
 /// rather than a LazyVStack of per-message NSTextViews. That gives us:
 ///   • Native auto-scroll-follows-bottom: only follows when the user is already near the bottom.
 ///   • No blanking-on-scroll: one text container, all messages laid out coherently.
-///   • Performance into the tens of thousands of messages — appends are O(new content),
-///     not O(total messages), and NSLayoutManager's non-contiguous layout keeps memory bounded.
+///   • Bounded memory: the transcript is a sliding window of at most `Room.messageCap`
+///     lines (Room trims on append); appends are O(new content), not O(total messages),
+///     and NSLayoutManager's non-contiguous layout keeps memory bounded. A window trim
+///     (every 500 messages past the cap) pays one full rebuild.
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @AppStorage("hideJoinPart") private var hideJoinPart = true
@@ -621,11 +623,17 @@ struct ChatTranscriptView: NSViewRepresentable {
                     }
                 }
             } else if current < renderedCount {
-                // Message list was truncated/reset (e.g. rejoin clears history) —
-                // fall back to a full rebuild so we stay consistent.
+                // Message list was truncated (scrollback-cap trim) or reset (e.g.
+                // rejoin clears history) — fall back to a full rebuild so we stay
+                // consistent. Only re-anchor to the bottom when the user was
+                // already there; readers scrolled up into the backlog keep their
+                // position through the trim.
+                let wasAtBottom = stickToBottom
                 rebuild(room: room, hideJoinPart: hideJoinPart, blockedSenders: blockedSenders, storage: storage)
                 renderedCount = room.messages.count
-                scrollToBottomDeferred()
+                if wasAtBottom {
+                    scrollToBottomDeferred()
+                }
             }
 
             if triggerFired {
