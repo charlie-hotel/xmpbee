@@ -86,12 +86,6 @@ class LogManager {
                 logEntry = "[\(timeString)] <\(sender)> \(body)\n"
             case "action":
                 logEntry = "[\(timeString)] * \(sender) \(body)\n"
-            case "join":
-                logEntry = "[\(timeString)] → \(sender) has joined\n"
-            case "part":
-                logEntry = "[\(timeString)] ← \(sender) has left\(body.isEmpty ? "" : " (\(body))")\n"
-            case "quit":
-                logEntry = "[\(timeString)] ⇐ \(sender) has quit\(body.isEmpty ? "" : " (\(body))")\n"
             case "topic":
                 logEntry = "[\(timeString)] ✦ \(sender) changed the topic to: \(body)\n"
             case "system":

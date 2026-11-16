@@ -7,11 +7,12 @@ import AppKit
 /// rather than a LazyVStack of per-message NSTextViews. That gives us:
 ///   • Native auto-scroll-follows-bottom: only follows when the user is already near the bottom.
 ///   • No blanking-on-scroll: one text container, all messages laid out coherently.
-///   • Performance into the tens of thousands of messages — appends are O(new content),
-///     not O(total messages), and NSLayoutManager's non-contiguous layout keeps memory bounded.
+///   • Bounded memory: the transcript is a sliding window of at most `Room.messageCap`
+///     lines (Room trims on append); appends are O(new content), not O(total messages),
+///     and NSLayoutManager's non-contiguous layout keeps memory bounded. A window trim
+///     (every 500 messages past the cap) pays one full rebuild.
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @AppStorage("hideJoinPart") private var hideJoinPart = true
     @FocusState private var isInputFocused: Bool
 
     // MARK: - Tab completion state
@@ -41,7 +42,6 @@ struct ChatView: View {
                         ChatTranscriptView(
                             room: viewModel.selectedRoom,
                             messageCount: viewModel.selectedRoom?.messages.count ?? 0,
-                            hideJoinPart: hideJoinPart,
                             scrollTrigger: viewModel.scrollToBottomTrigger,
                             blockedSenders: viewModel.selectedServer?.blockedDisplayNicks ?? []
                         )
@@ -419,7 +419,7 @@ extension Color {
 /// Renders the full room scrollback into one NSTextView wrapped in an NSScrollView.
 ///
 /// Update strategy:
-///   • Room or filter toggle changed → rebuild the whole text storage, scroll to bottom.
+///   • Room switched or blocklist changed → rebuild the whole text storage, scroll to bottom.
 ///   • Otherwise → append only messages added since the last update.
 ///   • Auto-scroll-follows-bottom is gated by whether the user was near the bottom
 ///     immediately before the append (tracked via NSClipView bounds notifications).
@@ -428,7 +428,6 @@ struct ChatTranscriptView: NSViewRepresentable {
     /// Pass-through so SwiftUI re-runs updateNSView when room.messages grows
     /// (Room is its own ObservableObject and isn't observed here directly).
     let messageCount: Int
-    let hideJoinPart: Bool
     let scrollTrigger: Int
     /// Sanitized display nicks blocked on this room's server — their lines are hidden.
     /// A change forces a full rebuild so block/unblock re-renders immediately.
@@ -500,7 +499,6 @@ struct ChatTranscriptView: NSViewRepresentable {
         // Initial population
         context.coordinator.update(
             room: room,
-            hideJoinPart: hideJoinPart,
             blockedSenders: blockedSenders,
             scrollTrigger: scrollTrigger
         )
@@ -510,7 +508,6 @@ struct ChatTranscriptView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.update(
             room: room,
-            hideJoinPart: hideJoinPart,
             blockedSenders: blockedSenders,
             scrollTrigger: scrollTrigger
         )
@@ -526,7 +523,6 @@ struct ChatTranscriptView: NSViewRepresentable {
 
         private var renderedRoomID: UUID?
         private var renderedCount: Int = 0
-        private var renderedHideJoinPart: Bool = true
         private var renderedBlockedSenders: Set<String> = []
         private var lastScrollTrigger: Int = 0
         /// True when the user is at (or within a few pixels of) the bottom.
@@ -554,7 +550,7 @@ struct ChatTranscriptView: NSViewRepresentable {
 
         // MARK: Update entry point
 
-        func update(room: Room?, hideJoinPart: Bool, blockedSenders: Set<String>, scrollTrigger: Int) {
+        func update(room: Room?, blockedSenders: Set<String>, scrollTrigger: Int) {
             guard let textView, let storage = textView.textStorage else { return }
 
             guard let room else {
@@ -565,22 +561,19 @@ struct ChatTranscriptView: NSViewRepresentable {
                 }
                 renderedRoomID = nil
                 renderedCount = 0
-                renderedHideJoinPart = hideJoinPart
                 renderedBlockedSenders = blockedSenders
                 lastScrollTrigger = scrollTrigger
                 return
             }
 
             let roomChanged = room.id != renderedRoomID
-            let filterChanged = hideJoinPart != renderedHideJoinPart
             let blocklistChanged = blockedSenders != renderedBlockedSenders
 
-            // Full rebuild path: room switched, join/part toggle flipped, or blocklist changed.
-            if roomChanged || filterChanged || blocklistChanged {
-                rebuild(room: room, hideJoinPart: hideJoinPart, blockedSenders: blockedSenders, storage: storage)
+            // Full rebuild path: room switched or blocklist changed.
+            if roomChanged || blocklistChanged {
+                rebuild(room: room, blockedSenders: blockedSenders, storage: storage)
                 renderedRoomID = room.id
                 renderedCount = room.messages.count
-                renderedHideJoinPart = hideJoinPart
                 renderedBlockedSenders = blockedSenders
                 stickToBottom = true
                 lastScrollTrigger = scrollTrigger
@@ -604,9 +597,6 @@ struct ChatTranscriptView: NSViewRepresentable {
                 for i in renderedCount..<current {
                     let m = room.messages[i]
                     if blockedSenders.contains(m.sender) { continue }
-                    if hideJoinPart && (m.type == .join || m.type == .part || m.type == .quit) {
-                        continue
-                    }
                     appended.append(buildMessageAttributedString(m))
                     appended.append(NSAttributedString(string: "\n"))
                 }
@@ -621,11 +611,17 @@ struct ChatTranscriptView: NSViewRepresentable {
                     }
                 }
             } else if current < renderedCount {
-                // Message list was truncated/reset (e.g. rejoin clears history) —
-                // fall back to a full rebuild so we stay consistent.
-                rebuild(room: room, hideJoinPart: hideJoinPart, blockedSenders: blockedSenders, storage: storage)
+                // Message list was truncated (scrollback-cap trim) or reset (e.g.
+                // rejoin clears history) — fall back to a full rebuild so we stay
+                // consistent. Only re-anchor to the bottom when the user was
+                // already there; readers scrolled up into the backlog keep their
+                // position through the trim.
+                let wasAtBottom = stickToBottom
+                rebuild(room: room, blockedSenders: blockedSenders, storage: storage)
                 renderedCount = room.messages.count
-                scrollToBottomDeferred()
+                if wasAtBottom {
+                    scrollToBottomDeferred()
+                }
             }
 
             if triggerFired {
@@ -635,13 +631,10 @@ struct ChatTranscriptView: NSViewRepresentable {
 
         // MARK: Rendering
 
-        private func rebuild(room: Room, hideJoinPart: Bool, blockedSenders: Set<String>, storage: NSTextStorage) {
+        private func rebuild(room: Room, blockedSenders: Set<String>, storage: NSTextStorage) {
             let full = NSMutableAttributedString()
             for m in room.messages {
                 if blockedSenders.contains(m.sender) { continue }
-                if hideJoinPart && (m.type == .join || m.type == .part || m.type == .quit) {
-                    continue
-                }
                 full.append(buildMessageAttributedString(m))
                 full.append(NSAttributedString(string: "\n"))
             }

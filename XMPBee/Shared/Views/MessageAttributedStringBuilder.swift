@@ -164,20 +164,6 @@ enum MessageAttributedStringBuilder {
             addLinks(to: &action)
             result.append(action)
 
-        case .join:
-            let text = "→ \(message.sender) has joined"
-            result.append(run(text, .init(font: .monoSmall, color: .secondary)))
-
-        case .part:
-            var text = "← \(message.sender) has left"
-            if !message.body.isEmpty { text += " (\(message.body))" }
-            result.append(run(text, .init(font: .monoSmall, color: .secondary)))
-
-        case .quit:
-            var text = "⇐ \(message.sender) has quit"
-            if !message.body.isEmpty { text += " (\(message.body))" }
-            result.append(run(text, .init(font: .monoSmall, color: .secondary)))
-
         case .topic:
             let text = "✦ \(message.sender) changed the topic to: \(message.body)"
             var topic = run(text, .init(font: .monoSmall, color: .secondary))
