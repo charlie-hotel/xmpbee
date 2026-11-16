@@ -1646,7 +1646,13 @@ class ChatViewModel: ObservableObject, XMPPClientDelegate {
                 }
             }
         }
-        objectWillChange.send()
+        // No view-model-wide republish here on purpose.  Occupant changes are Room's
+        // own @Published state; the macOS UserListView and iOS user-list sheet
+        // observe Room directly, and sidebar channel rows observe Room for their
+        // badges.  Presence stanzas arrive several times a second on busy servers —
+        // a per-stanza broadcast re-rendered the entire window (glass materials,
+        // accessibility graph, all sheets) at flood rate and retained ~160 bytes of
+        // SwiftUI/AppKit bookkeeping per render (~10 MB/hour measured over 45 h).
     }
 
     nonisolated func xmpp(_ client: XMPPClient, didReceiveRoomSubject subject: String, room roomJID: String) {

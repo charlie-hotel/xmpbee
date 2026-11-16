@@ -21,11 +21,11 @@ struct ContentView: View {
                 ChatView(viewModel: viewModel)
                     .frame(minWidth: 400)
 
-                if viewModel.selectedRoom?.isDM != true {
+                if let room = viewModel.selectedRoom, !room.isDM {
                     Divider()
 
                     // Right panel: user list
-                    UserListView(viewModel: viewModel)
+                    UserListView(viewModel: viewModel, room: room)
                         .frame(minWidth: 130, idealWidth: 170, maxWidth: 230)
                 }
             }
