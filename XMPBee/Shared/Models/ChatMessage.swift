@@ -12,9 +12,6 @@ struct ChatMessage: Identifiable {
 
     enum MessageType {
         case chat           // normal message
-        case join           // user joined
-        case part           // user left
-        case quit           // user quit
         case topic          // topic change
         case action         // /me action
         case system         // system/server message

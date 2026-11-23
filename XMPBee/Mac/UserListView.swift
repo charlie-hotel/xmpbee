@@ -1,8 +1,14 @@
 import SwiftUI
 
 /// Right sidebar showing room occupants — Liquid Glass design
+///
+/// Observes `Room` directly: presence stanzas mutate `room.occupants` several times
+/// a second on busy servers, and the chat view model must NOT be republished for
+/// those (the whole window would re-render per stanza). See
+/// `ChatViewModel.xmppDidReceivePresenceMain`.
 struct UserListView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @ObservedObject var room: Room
 
     /// Occupants minus any blocked nicks on the selected server.
     private func visibleOccupants(_ room: Room) -> [Occupant] {
@@ -15,29 +21,27 @@ struct UserListView: View {
             // User list
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
-                    if let room = viewModel.selectedRoom, !room.isDM {
-                        ForEach(visibleOccupants(room)) { occupant in
-                            OccupantRow(occupant: occupant)
-                                .contextMenu {
-                                    Button("Send Message") {
-                                        if let server = viewModel.selectedServer {
-                                            viewModel.openDM(nick: occupant.nick, on: server)
-                                        }
+                    ForEach(visibleOccupants(room)) { occupant in
+                        OccupantRow(occupant: occupant)
+                            .contextMenu {
+                                Button("Send Message") {
+                                    if let server = viewModel.selectedServer {
+                                        viewModel.openDM(nick: occupant.nick, on: server)
                                     }
+                                }
+                                Divider()
+                                Button("Copy Nickname") {
+                                    Clipboard.copy(occupant.nick)
+                                }
+                                if occupant.nick != room.nickname {
                                     Divider()
-                                    Button("Copy Nickname") {
-                                        Clipboard.copy(occupant.nick)
-                                    }
-                                    if occupant.nick != room.nickname {
-                                        Divider()
-                                        Button("Block \(occupant.displayNick)", role: .destructive) {
-                                            if let server = viewModel.selectedServer {
-                                                viewModel.blockNick(occupant.nick, on: server)
-                                            }
+                                    Button("Block \(occupant.displayNick)", role: .destructive) {
+                                        if let server = viewModel.selectedServer {
+                                            viewModel.blockNick(occupant.nick, on: server)
                                         }
                                     }
                                 }
-                        }
+                            }
                     }
                 }
                 .padding(.vertical, 4)
@@ -52,14 +56,12 @@ struct UserListView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.channelText)
                 Spacer()
-                if let room = viewModel.selectedRoom {
-                    Text("\(visibleOccupants(room).count)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .glassEffect(.clear, in: .capsule)
-                }
+                Text("\(visibleOccupants(room).count)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .glassEffect(.clear, in: .capsule)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

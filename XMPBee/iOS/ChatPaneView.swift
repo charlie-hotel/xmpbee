@@ -14,7 +14,6 @@ import UIKit
 struct ChatPaneView: View {
     @EnvironmentObject var viewModel: ChatViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @AppStorage("hideJoinPart") private var hideJoinPart = true
     /// Horizontal displacement + fade for the floating composer, driven by the iPhone
     /// drawers so an expanding sidebar pushes the input bar out of its way in the
     /// sidebar's direction of travel. iPad uses the defaults (no drawers).
@@ -73,7 +72,7 @@ struct ChatPaneView: View {
     private func roomView(_ room: Room) -> some View {
         // Floating glass composer docked at the bottom; the transcript scrolls
         // underneath it and shows through the glass (mirrors the macOS input bar).
-        RoomTranscriptView(room: room, hideJoinPart: hideJoinPart, scrollTrigger: viewModel.scrollToBottomTrigger, blockedSenders: viewModel.selectedServer?.blockedDisplayNicks ?? [])
+        RoomTranscriptView(room: room, scrollTrigger: viewModel.scrollToBottomTrigger, blockedSenders: viewModel.selectedServer?.blockedDisplayNicks ?? [])
             // Tap the transcript to dismiss the keyboard. Simultaneous so it doesn't
             // swallow link taps, text selection, or scrolling.
             .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
@@ -174,7 +173,6 @@ private struct ReconnectBanner: View {
 /// `scrollToBottomTrigger`) changes.
 private struct RoomTranscriptView: View {
     @ObservedObject var room: Room
-    let hideJoinPart: Bool
     let scrollTrigger: Int
     /// Sanitized display nicks blocked on this room's server — their lines are hidden.
     var blockedSenders: Set<String> = []
@@ -183,12 +181,11 @@ private struct RoomTranscriptView: View {
     /// `stickToBottom` gate so new messages only auto-scroll when already at the end.
     @State private var isAtBottom = true
 
-    /// Messages to display — mirrors the macOS transcript's join/part/quit hiding.
+    /// Messages to display — blocked senders' lines are hidden while blocked, so
+    /// unblock reveals them again without a re-fetch.
     private var displayedMessages: [ChatMessage] {
         room.messages.filter { msg in
-            if blockedSenders.contains(msg.sender) { return false }
-            if hideJoinPart && (msg.type == .join || msg.type == .part || msg.type == .quit) { return false }
-            return true
+            !blockedSenders.contains(msg.sender)
         }
     }
 

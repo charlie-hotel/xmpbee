@@ -24,7 +24,6 @@ class XMPPConnection: NSObject, StreamDelegate {
     private var inputStream: InputStream?
     private var outputStream: OutputStream?
     private var streamThread: Thread?
-    private var readBuffer = Data()
     private var writeBuffer = Data()
     // Guards against flushWriteBuffer() re-entering itself: output.write() can
     // synchronously deliver .hasSpaceAvailable on the same runloop, which would
